@@ -4,16 +4,17 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{E49C23C6-F5E2-4B81-B441-D7D6700B8835}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>CoinbaseData</RootNamespace>
-    <AssemblyName>CoinbaseData</AssemblyName>
+    <ProjectGuid>{818FBEDE-E5C6-41F2-87ED-0B73BF5992DB}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Utils</RootNamespace>
+    <AssemblyName>Utils</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
@@ -23,6 +24,7 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
@@ -44,18 +46,31 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="DbCandles.cs" />
-    <Compile Include="TableHelper.cs" />
+    <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Statistics\Sma.cs" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="App.config" />
+    <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CoinbaseConsole\CoinbaseConsole.csproj">
+      <Project>{774FF6BE-3D87-4CD3-A1C3-7BBA629D59A7}</Project>
+      <Name>CoinbaseConsole</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\CoinbaseData\CoinbaseData.csproj">
+      <Project>{e49c23c6-f5e2-4b81-b441-d7d6700b8835}</Project>
+      <Name>CoinbaseData</Name>
+    </ProjectReference>
     <ProjectReference Include="..\CoinbasePro\CoinbasePro.csproj">
       <Project>{454a0fac-c580-4674-ae58-6d8e6658685b}</Project>
       <Name>CoinbasePro</Name>
     </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
+    <ProjectReference Include="..\CoinbaseUtils\CoinbaseUtils.csproj">
+      <Project>{6bc2d2b3-2d03-4d22-a407-a5cb88d013c7}</Project>
+      <Name>CoinbaseUtils</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

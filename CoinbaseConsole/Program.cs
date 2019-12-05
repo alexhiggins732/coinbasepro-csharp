@@ -1,67 +1,154 @@
 ﻿using CoinbasePro.Network.Authentication;
-using CoinbasePro.Services.Products.Models;
 using CoinbasePro.Services.Products.Types;
 using CoinbasePro.Shared.Types;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using CoinbaseData;
 using System.IO;
+using CoinbaseUtils;
+using CoinbasePro.WebSocket.Types;
+using System.Linq;
+using SuperWebSocket;
 
 namespace CoinbaseConsole
 {
     class Program
     {
+        static void Main(string[] args)
+        {
+            RunManager();
+          
+        }
         static void LogError(string message)
         {
             var sw = new StreamWriter("error.log", true);
             sw.WriteLine($"[{DateTime.Now}] [ERROR] {message}");
             sw.Close();
         }
-        static void SaveCandles(ProductType productPair, CandleGranularity granularity)
+
+        static void RunManager()
         {
+            var driver = new ConsoleDriver();
+            driver.Run();
+        }
+    }
+    public class DevelopmentTests
+    {
 
-
-            var svc = new CandleService();
-            int minutesPerCandle = ((int)granularity) / 60;
-            int minutesPerOffset = 300 * minutesPerCandle;
-            var startDate = DateTime.Parse("12/31/2016");
-            var endDate = startDate.AddMinutes(minutesPerOffset);
-            var tableName = $"{productPair}{granularity}";
-            while (startDate < DateTime.Now)
+        static void RunTestTickerServer()
+        {
+            //TestWebSocketServer();
+            var server = DevelopmentTests.TestTickerServer();
+            if (server == null)
             {
-                try
-                {
-                    Console.Title = $"Fetch {productPair} Candles: {startDate} - {endDate}";
-                    var candles = svc
-                                      .GetCandles(productPair, startDate, endDate, granularity)
-                                      .OrderBy(x => x.Time)
-                                      .ToList();
-                    if (candles.Count > 0)
-                    {
-                        Console.Title = $"Fetch {productPair} Candles: {startDate} - {endDate} - {candles.Count}";
-                        TableHelper.Save(() => candles, tableName);
-                    }
-                    System.Threading.Thread.Sleep(400);
-                    startDate = startDate.AddMinutes(minutesPerOffset);
-                    endDate = startDate.AddMinutes(minutesPerOffset);
-                }
-                catch (Exception ex)
-                {
-                    LogError(ex.Message);
-                }
-
-
+                Console.WriteLine("Failed To create server. Press any key to exit");
+                var k = Console.ReadKey();
+            }
+            else
+            {
+                Console.WriteLine("Server Started. Press any key to exit");
+                var k = Console.ReadKey();
 
             }
+            server?.Stop();
+        }
+        static CoinbaseWebSocket TestWebSocket()
+        {
+            var socket = new CoinbaseWebSocket();
+            var productTypes = new[] { ProductType.LtcUsd };
+            var channelTypes = new[] { ChannelType.Ticker };
+            socket.OnTickerReceived += (sender, e) => Socket_OnTickerReceived(socket, e);
+            socket.Start(productTypes.ToList(), channelTypes.ToList());
+            Console.WriteLine("Started Socket");
+            return socket;
+
+        }
+        static CoinbaseTicker TestTicker()
+        {
+            var ticker = CoinbaseTicker.Create(ProductType.LtcUsd);
+            ticker.OnTickerReceived += (sender, e) => Socket_OnTickerReceived(ticker, e);
+            Console.WriteLine("Started ticker");
+            return ticker;
 
 
         }
-        static void Main(string[] args)
+
+        private static void Socket_OnTickerReceived(object sender, CoinbasePro.WebSocket.Models.Response.WebfeedEventArgs<CoinbasePro.WebSocket.Models.Response.Ticker> e)
         {
-            SaveCandles(ProductType.LtcUsd, CandleGranularity.Minutes1);
+            var ticker = e.LastOrder;
+            Console.WriteLine($"{sender.GetType().Name} - Ask:{ticker.BestAsk} - Bid:{ ticker.BestBid}");
+        }
+
+        public static TickerServer TestTickerServer()
+        {
+            var server = TickerServer.Create(2012, ProductType.LtcUsd);
+            if (server.Start())
+            {
+                Console.WriteLine("Started");
+                Console.ReadKey();
+                return null;
+            }
+            else
+            {
+                Console.WriteLine("Failed to start server");
+                return null;
+            }
+        }
+        public static void TestWebSocketServer()
+        {
+            var appServer = new WebSocketServer();
+
+            //Setup the appServer
+            if (!appServer.Setup(2012)) //Setup with listening port
+            {
+                Console.WriteLine("Failed to setup!");
+                Console.ReadKey();
+                return;
+            }
+
+            appServer.NewMessageReceived += (session, message) =>
+            {
+                Console.WriteLine($"Recieved {message}");
+                session.Send(message);
+            };
+
+
+            appServer.NewSessionConnected += (session) =>
+            {
+                Console.WriteLine($"Connected {session.SessionID}");
+            };
+
+            Console.WriteLine();
+
+            //Try to start the appServer
+            if (!appServer.Start())
+            {
+                Console.WriteLine("Failed to start!. Press any key to exit!");
+                Console.ReadKey();
+                return;
+            }
+            Console.WriteLine("Started. Press any key to exit!");
+            Console.ReadKey();
+        }
+
+        public static void TestTickers()
+        {
+            TestWebSocketServer();
+            var socket = TestWebSocket();
+            var ticker = TestTicker();
+            Console.WriteLine("Press any key to exit");
+            var k = Console.ReadKey();
+            socket.Stop();
+            ticker.Stop();
+        }
+
+        static void SeedCandles()
+        {
+            var products = new[] { ProductType.LtcUsd, ProductType.BtcUsd };
+            var grans = new[] { CandleGranularity.Minutes1, CandleGranularity.Minutes5, CandleGranularity.Minutes15, CandleGranularity.Hour1, CandleGranularity.Hour6, CandleGranularity.Hour24 };
+            Candles.SaveCandles(products, grans);
+            //SaveCandles(ProductType.BtcUsd, CandleGranularity.Minutes5);
             TableHelper.AssureCandlesTables(ProductType.LtcUsd);
             //create an authenticator with your apiKey, apiSecret and passphrase
             var authenticator = new Authenticator(Creds.ApiKey, Creds.ApiSecret, Creds.PassPhrase);
@@ -82,61 +169,6 @@ namespace CoinbaseConsole
 
         }
 
-        static List<Candle> GetCandles(ProductType productPair,
-            DateTime start,
-            DateTime end,
-            CandleGranularity granularity)
-        {
-            return Client.Instance
-                .ProductsService
-                .GetHistoricRatesAsync(productPair, start, end, granularity)
-                .GetAwaiter()
-                .GetResult()
-                .ToList(); ;
-        }
-    }
 
-    public class CoinbaseServiceBase
-    {
-        public CoinbasePro.CoinbaseProClient client = Client.Instance;
-    }
-
-    public class DateHelper
-    {
-
-        public static DateTime ConvertToLocal(DateTime value)
-        {
-            var now = DateTime.Now;
-            var utcNow = DateTime.UtcNow;
-            var diff = now.Subtract(utcNow).TotalHours;
-            return value.AddHours(diff);
-        }
-    }
-    public class CandleService : CoinbaseServiceBase
-    {
-
-        public List<Candle> GetCandles(ProductType productPair,
-           DateTime start,
-           DateTime end,
-           CandleGranularity granularity,
-           bool useLocalTime = true)
-        {
-            if (useLocalTime)
-            {
-
-                start = start.ToUniversalTime();
-                end = end.ToUniversalTime();
-            }
-            var result = client
-                .ProductsService
-                .GetHistoricRatesAsync(productPair, start, end, granularity)
-                .GetAwaiter()
-                .GetResult()
-                .ToList();
-            if (useLocalTime)
-                result.ForEach(x => x.Time = x.Time.ToLocalTime());
-            return result;
-
-        }
     }
 }

@@ -13,6 +13,8 @@ namespace CoinbaseData
 {
     public class TableHelper
     {
+        public static Dictionary<string, string> InsertScripts = new Dictionary<string, string>();
+        public static Dictionary<string, string> UpdateScripts = new Dictionary<string, string>();
         public static string CreateTableScript<T>(string tableName = null)
         {
             var typeOfT = typeof(T);
@@ -47,7 +49,7 @@ namespace CoinbaseData
         }
 
 
-        public static Dictionary<string, string> InsertScripts = new Dictionary<string, string>();
+  
         public static string InsertTableScript<T>(string tableName = null)
         {
             if (InsertScripts.ContainsKey(tableName))
@@ -63,10 +65,10 @@ namespace CoinbaseData
 
             foreach (var prop in typeProps)
             {
-                var propName = prop.Name;           
+                var propName = prop.Name;
                 columnList.Add($"{propName}");
             }
-            sb.Append($"\r\n\t{string.Join(",\r\n\t", columnList.Select(x=> $"[{x}]"))}");
+            sb.Append($"\r\n\t{string.Join(",\r\n\t", columnList.Select(x => $"[{x}]"))}");
             sb.Append("\r\n)\r\n");
             sb.Append($"Values\r\n(\r\n");
             sb.Append($"\r\n\t{string.Join(",\r\n\t", columnList.Select(x => $"@{x}"))}");
@@ -75,6 +77,37 @@ namespace CoinbaseData
             InsertScripts[tableName] = result;
             return result;
         }
+
+        public static string UpdateTableScript<T>(string keyColumn = null, string tableName = null)
+        {
+            if (UpdateScripts.ContainsKey(tableName))
+                return UpdateScripts[tableName];
+
+            var typeOfT = typeof(T);
+            var typeProps = typeOfT.GetProperties();
+            var typeName = tableName ?? typeOfT.Name;
+            var sb = new StringBuilder();
+            sb.Append($"Update [{typeName}]\r\n");
+            sb.Append($"Set\r\n");
+
+            var columnList = new List<string>();
+
+            foreach (var prop in typeProps)
+            {
+                var propName = prop.Name;
+                columnList.Add($"{propName}");
+
+            }
+
+            sb.Append($"\t{string.Join(",\r\n\t", columnList.Select(x => $"[{x}] = @{x}"))}");
+            sb.Append("\r\nWhere");
+            sb.Append($"\r\n\t[{keyColumn}] = @{keyColumn}");
+            
+            var result = sb.ToString();
+            UpdateScripts[tableName] = result;
+            return result;
+        }
+
 
         public static void Save<T>(Func<IEnumerable<T>> p, string tableName)
         {
@@ -85,6 +118,17 @@ namespace CoinbaseData
                 conn.Execute(query, items);
             }
         }
+
+        public static void Update<T>(Func<IEnumerable<T>> p, string tableName, string keyColumn)
+        {
+            var query = UpdateTableScript<T>(keyColumn, tableName);
+            List<T> items = p().ToList();
+            using (var conn = new SqlConnection(ConnectionString))
+            {
+                conn.Execute(query, items);
+            }
+        }
+
 
         public static string GetSqlDbTypeName(Type propType)
         {
@@ -189,7 +233,7 @@ namespace CoinbaseData
 
                             var tableName = $"{productType}{granularity}";
                             query = $"select count(0) from sys.tables where name = @tableName";
-                            count = conn.QuerySingle<int>(query, new { tableName }, transaction:trans);
+                            count = conn.QuerySingle<int>(query, new { tableName }, transaction: trans);
                             if (count > 0)
                             {
                                 continue;
