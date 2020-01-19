@@ -21,6 +21,7 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <LangVersion>7.3</LangVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -29,6 +30,7 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <LangVersion>7.3</LangVersion>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Castle.Core, Version=4.0.0.0, Culture=neutral, PublicKeyToken=407dd0808d44fbdc, processorArchitecture=MSIL">
@@ -95,6 +97,7 @@
       <Private>True</Private>
       <Private>True</Private>
     </Reference>
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Security.Cryptography.Algorithms, Version=4.2.1.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Security.Cryptography.Algorithms.4.3.0\lib\net463\System.Security.Cryptography.Algorithms.dll</HintPath>
       <Private>True</Private>
@@ -136,12 +139,24 @@
     <Compile Include="CandleService.cs" />
     <Compile Include="CoinbaseTicker.cs" />
     <Compile Include="CoinbaseWebSocket.cs" />
+    <Compile Include="CommandBus\CommandBase.cs" />
+    <Compile Include="CommandBus\CommandBus.cs" />
+    <Compile Include="CommandBus\CommandBusLogger.cs" />
+    <Compile Include="CommandBus\CreateOrderCommand.cs" />
+    <Compile Include="CommandBus\ICommand.cs" />
+    <Compile Include="CommandBus\ICommandBusLogger.cs" />
+    <Compile Include="CommandBus\ICommandSink.cs" />
+    <Compile Include="CommandBus\InMemoryCommandSink.cs" />
+    <Compile Include="CommandBus\OrderCommand.cs" />
+    <Compile Include="CommandBus\OrderCreatedCommand.cs" />
+    <Compile Include="CommandBus\OrderProcessor.cs" />
     <Compile Include="Creds.cs" />
     <Compile Include="Client.cs" />
     <Compile Include="CoinbaseService.cs" />
     <Compile Include="CredentialHelper.cs" />
     <Compile Include="CurrencyPair.cs" />
     <Compile Include="Extensions.cs" />
+    <Compile Include="FillManager.cs" />
     <Compile Include="Orderbook.cs" />
     <Compile Include="OrderManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

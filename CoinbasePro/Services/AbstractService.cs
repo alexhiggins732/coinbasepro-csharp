@@ -24,7 +24,7 @@ namespace CoinbasePro.Services
             this.httpClient = httpClient;
         }
 
-        private async Task<HttpResponseMessage> SendHttpRequestMessageAsync(
+        protected async Task<HttpResponseMessage> SendHttpRequestMessageAsync(
             HttpMethod httpMethod,
             string uri,
             string content = null)
@@ -98,7 +98,7 @@ namespace CoinbasePro.Services
             return pagedList;
         }
 
-        private async Task<IList<IList<T>>> GetAllSubsequentPages<T>(
+        protected async Task<IList<IList<T>>> GetAllSubsequentPages<T>(
             string uri,
             string firstPageAfterCursorId,
             int numberOfPages)

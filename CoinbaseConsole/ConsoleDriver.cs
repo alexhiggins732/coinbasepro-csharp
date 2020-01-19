@@ -1,19 +1,31 @@
 ﻿using CoinbasePro.Services.Accounts.Models;
 using CoinbasePro.Services.Orders.Models.Responses;
 using CoinbasePro.Services.Orders.Types;
+using CoinbasePro.Services.Products.Models;
 using CoinbasePro.Shared.Types;
+using CoinbasePro.WebSocket;
 using CoinbasePro.WebSocket.Models.Response;
+using CoinbasePro.WebSocket.Types;
 using CoinbaseUtils;
+using Newtonsoft.Json;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CoinbaseConsole
 {
+
     public class ConsoleDriver
     {
+        private StreamWriter log;
+        const string tab = "    ";
+        const string tabbracket = tab + "->";
         static char[] space = " ".ToCharArray();
         public static ProductType DriverDefaultProductType = ProductType.LtcUsd;
         public static ProductType DefaultProductType => DriverDefaultProductType;
@@ -21,26 +33,45 @@ namespace CoinbaseConsole
         public ProductType ProductType { get; private set; }
         public ConsoleDriver() : this(DriverDefaultProductType) { }
 
-        public Func<Ticker, String> FormatTicker => (ticker) =>
-            $"{DateTime.Now}: {ticker.ProductId}: {ticker.BestBid}-{ticker.BestAsk}";
-
         public ConsoleDriver(ProductType productType)
         {
             SetProductType(productType);
+            log = new StreamWriter("ConsoleDriver.log", true);
+            log.AutoFlush = true;
         }
-        public CoinbaseTicker ticker;
 
+        public Func<Ticker, String> FormatTicker => (ticker) =>
+            $"{DateTime.Now}: {ticker.ProductId}: {ticker.BestBid}-{ticker.BestAsk}";
+
+
+        public CoinbaseTicker ticker;
+        private CoinbaseWebSocket userFeed;
 
         void SetProductType(ProductType productType)
         {
             this.ProductType = productType;
+            Console.WriteLine($"{tabbracket}Set Product: {productType}");
             SetTicker(productType);
         }
         public void Run()
         {
-            this.ticker = CoinbaseTicker.Create(ProductType.LtcUsd);
-            ticker.OnTickerReceived += (sender, e) => OnTickerReceived(ticker, e);
 
+            CreateCoinbaseWebSocket();
+            if (File.Exists("consoledriver.ini"))
+            {
+                var lines = File.ReadAllLines("consoledriver.ini").Where(x => !string.IsNullOrEmpty(x)).ToList(); ;
+                Console.WriteLine("Found 'consoledriver.ini'. Execute? ([y]es or [n]o)");
+                lines.ForEach(x => Console.WriteLine($"{tabbracket} {x}"));
+                var result = Console.ReadLine().Trim().ToLower();
+                if (result == "y" || result == "yes")
+                {
+                    lines.ForEach(x =>
+                    {
+                        Console.WriteLine(x);
+                        ParseArguments(x).Execute();
+                    });
+                }
+            }
             while (true)
             {
                 var line = Console.ReadLine();
@@ -51,19 +82,104 @@ namespace CoinbaseConsole
 
         }
 
-        private void OnTickerReceived(CoinbaseTicker ticker, WebfeedEventArgs<Ticker> e)
-            => Console.Title = FormatTicker(e.LastOrder);
+        private void Ticker_OnTickerReceived(object sender, WebfeedEventArgs<Ticker> e)
+        {
+            Console.Title = FormatTicker(LastTicker = e.LastOrder);
+        }
+
+        public WebSocketFeedLogger SocketLogger;
+        private void CreateCoinbaseWebSocket()
+        {
+            this.SocketLogger = new WebSocketFeedLogger();
+            this.userFeed = new CoinbaseWebSocket();
+            this.userFeed.OnWebSocketOpenAndSubscribed += UserFeed_OnWebSocketOpenAndSubscribed;
+            this.userFeed.OnWebSocketClose += UserFeed_OnWebSocketClose;
+            this.userFeed.Start((new[] { ProductType.LtcUsd }).ToList(), (new[] { ChannelType.User }).ToList());
+
+            OrderManager.Refresh();
+
+            userFeed.OnSubscriptionReceived += (sender, e) =>
+            {
+                string message = $"[{DateTime.Now}] {e.LastOrder.ToJson()}";
+                //Console.WriteLine();
+                if (bool.Parse(bool.FalseString)) log.WriteLine(message);
+
+            };
+
+            userFeed.OnOpenReceived += (sender, e) =>
+            {
+                string message = $"[{DateTime.Now}] [{e.LastOrder.OrderId}] {e.LastOrder.ToDebugString()}";
+                Console.WriteLine(message);
+                log.WriteLine(message);
+                OrderManager.AddOrUpdate(e.LastOrder);
+            };
+            userFeed.OnReceivedReceived += (sender, e) =>
+            {
+                string message = $"[{DateTime.Now}]  [{e.LastOrder.OrderId}] {e.LastOrder.ToDebugString()}";
+                log.WriteLine(message);
+                Console.WriteLine(message);
+                OrderManager.AddOrUpdate(e.LastOrder);
+            };
+            userFeed.OnMatchReceived += (sender, e) =>
+            {
+                var myOrder = OrderManager.TryGetByFirstIds(e.LastOrder.MakerOrderId, e.LastOrder.TakerOrderId);
+                string message = $"[{DateTime.Now}] [{myOrder?.Id}] {e.LastOrder.ToDebugString()}";
+                log.WriteLine(message);
+                Console.WriteLine(message);
+            };
+            userFeed.OnLastMatchReceived += (sender, e) =>
+            {
+                var myOrder = OrderManager.TryGetByFirstIds(e.LastOrder.MakerOrderId, e.LastOrder.TakerOrderId);
+                string message = $"[{DateTime.Now}] [{myOrder.Id}] {e.LastOrder.ToDebugString()}";
+                log.WriteLine(message);
+                Console.WriteLine(message);
+            };
+            userFeed.OnDoneReceived += (sender, e) =>
+            {
+                string message = $"[{DateTime.Now}] [{e.LastOrder.OrderId}] {e.LastOrder.ToDebugString()}";
+                log.WriteLine(message);
+                Console.WriteLine(message);
+                OrderManager.AddOrUpdate(e.LastOrder);
+            };
+
+        }
+
+        private void UserFeed_OnWebSocketClose(object sender, WebfeedEventArgs<EventArgs> e)
+        {
+            WebSocket4Net.WebSocket sock = (WebSocket4Net.WebSocket)sender;
+            sock.MessageReceived -= WebSocketFeed_MessageReceived;
+        }
+
+        private void UserFeed_OnWebSocketOpenAndSubscribed(object sender, WebfeedEventArgs<EventArgs> e)
+        {
+            WebSocket4Net.WebSocket sock = (WebSocket4Net.WebSocket)sender;
+            sock.MessageReceived += WebSocketFeed_MessageReceived;
+        }
+
+        private void WebSocketFeed_MessageReceived(object sender, global::WebSocket4Net.MessageReceivedEventArgs e)
+        {
+            this.SocketLogger.LogMessageRecieved(e);
+        }
+
+        private Ticker LastTicker = null;
 
         void SetTicker(ProductType productType)
         {
+            this.ProductType = productType;
             if (ticker != null)
             {
-                ticker.OnTickerReceived -= (sender, e) => OnTickerReceived(ticker, e);
+                ticker.OnTickerReceived -= Ticker_OnTickerReceived;
                 ticker.Stop();
+                ticker = null;
             }
 
             ticker = CoinbaseTicker.Create(productType);
-            ticker.OnTickerReceived += (sender, e) => OnTickerReceived(ticker, e);
+            ticker.OnTickerReceived += Ticker_OnTickerReceived;
+
+
+            this.userFeed?.Stop();
+            this.userFeed?.Start((new[] { productType }).ToList(), (new[] { ChannelType.User }).ToList());
+
 
         }
 
@@ -88,7 +204,22 @@ namespace CoinbaseConsole
             {
                 commandActions.AddRange(ParseCancellationOptions(arguments));
                 //cancel all, cancel buys, cancel sells, cancel all buys, cancel all sells
-
+            }
+            else if (arg0 == "volume")
+            {
+                commandActions.AddRange(ParseVolumeOptions(arguments));
+            }
+            else if (arg0 == "matchqueue")
+            {
+                commandActions.AddRange(ParseMatchQueueOptions(arguments));
+            }
+            else if (arg0 == "ticker")
+            {
+                commandActions.Add(() =>
+                {
+                    if (LastTicker != null)
+                        Console.WriteLine(JsonConvert.SerializeObject(LastTicker));
+                });
             }
             else if (arg0 == "orders")
             {
@@ -110,6 +241,10 @@ namespace CoinbaseConsole
             {
                 commandActions.AddRange(ParseChangeProductType(arguments));
             }
+            else if (arg0 == "swing")
+            {
+                commandActions.AddRange(ParseSwingOptions(arguments));
+            }
             else
             {
                 commandActions.Add(arguments.InvalidAction());
@@ -118,6 +253,363 @@ namespace CoinbaseConsole
             result.Actions = commandActions;
             return result;
 
+        }
+
+        private IEnumerable<Action> ParseVolumeOptions(ArgumentList arguments)
+        {
+            var result = new List<Action>();
+
+
+            if (arguments.Length == 1)
+            {
+                result.Add(() => Console.WriteLine($"{tabbracket}: 30 Day Volume {OrderVolumeService.Get30DayVolume().ToCurrency(Currency.USD)}"));
+            }
+            else
+            {
+                result.Add(arguments.InvalidAction());
+            }
+            return result;
+        }
+
+        private IEnumerable<Action> ParseMatchQueueOptions(ArgumentList arguments)
+        {
+            List<Action> actions = new List<Action>();
+
+            Action addShowActions = () =>
+            {
+                actions.Add(() => Console.WriteLine($"{tabbracket}{nameof(MatchQueue)}.{nameof(MatchQueue.MatchedBuys)}: {MatchQueue.MatchedBuys.QueueTotal}"));
+                actions.Add(() => Console.WriteLine($"{tabbracket}{nameof(MatchQueue)}.{nameof(MatchQueue.MatchedSells)}: {MatchQueue.MatchedSells.QueueTotal}"));
+            };
+            if (arguments.Length == 1)
+            {
+                addShowActions();
+            }
+            else if (arguments.Length == 2 && arguments.arg1 == "clear")
+            {
+                actions.Add(() => MatchQueue.Clear());
+                addShowActions();
+            }
+            else
+            {
+                actions.Add(arguments.InvalidAction($"{tabbracket}Usage: matchqueue [clear]"));
+            }
+            return actions;
+        }
+        private IEnumerable<Action> ParseSwingCancelOptions(ArgumentList arguments)
+        {
+            List<Action> result = new List<Action>();
+            if (SwingOptions.Count == 0)
+            {
+                var options = SwingOptions.Values.First();
+                result.Add(() => StopSwing(ProductType, options));
+            }
+            else if (arguments.Length == 3 && arguments[1].ParseEnum<ProductType>(out ProductType productType) && SwingOptions.ContainsKey(productType))
+            {
+                result.Add(() => StopSwing(ProductType, SwingOptions[productType]));
+            }
+            else if (arguments.Length == 2 && SwingOptions.ContainsKey(ProductType))
+            {
+                result.Add(() => StopSwing(ProductType, SwingOptions[ProductType]));
+            }
+            else
+            {
+                result.Add(arguments.InvalidAction("Usage: swing cancel [producttype]"));
+            }
+            return result;
+        }
+        private IEnumerable<Action> ParseSwingOptions(ArgumentList arguments)
+        {
+            List<Action> result = new List<Action>();
+
+            if (arguments.line.IndexOf("cancel") > -1)
+            {
+                result.AddRange(ParseSwingCancelOptions(arguments));
+            }
+            else
+            {
+
+
+                //TODO: incorporate initial order size/side
+                string options = "swing [producttype] lowprice highprice";
+                Action<string> invalid = (x) =>
+                {
+                    result.Add(arguments.InvalidAction(x));
+                };
+                int idx = 1;
+                if (arguments.Length >= 3)
+                {
+                    if (arguments[idx].ParseEnum<ProductType>(out ProductType productType))
+                    {
+                        if (arguments.Length < 4)
+                        {
+                            invalid($"Swing requires at least 4 arguments when product type is specified.\r\n{tabbracket}{options}");
+                        }
+                        else
+                        {
+                            idx++;
+                            SetProductType(productType);
+                        }
+                    }
+
+                    if (result.Count == 0 && arguments.Length - idx >= 2)
+                    {
+                        if (!(arguments[idx++].ParseDecimal(out decimal buyPrice)))
+                        {
+                            invalid($"Invalid low price specified.\r\n{tabbracket}{options}");
+                        }
+                        else if (!(arguments[idx++].ParseDecimal(out decimal sellPrice)))
+                        {
+                            invalid($"Invalid high price specified.\r\n{tabbracket}{options}");
+                        }
+                        else
+                        {
+                            if (!(buyPrice < sellPrice))
+                            {
+                                invalid($"Invalid price range specified.\r\n{tabbracket}{options}");
+                            }
+                            else
+                            {
+                                result.Add(() => StartSwing(buyPrice, sellPrice));
+                            }
+
+                        }
+                    }
+
+                }
+                else
+                {
+                    result.Add(arguments
+                           .InvalidAction($"Swing requires at least 3 arguments when product type is specified.\r\n{tabbracket}{options}")
+                           );
+                }
+            }
+            return result;
+        }
+
+
+        Dictionary<ProductType, SwingOrderOptions> SwingOptions = new Dictionary<ProductType, SwingOrderOptions>();
+
+        private void StartSwing(decimal lowPrice, decimal highPrice)
+        {
+            var orderOptions = new SwingOrderOptions(lowPrice, highPrice);
+            if (!SwingOptions.ContainsKey(this.ProductType))
+            {
+                SwingOptions.Add(this.ProductType, orderOptions);
+            }
+            else
+            {
+                SwingOptions[this.ProductType] = orderOptions;
+            }
+            orderOptions.MatchHandler = UserFeed_OnMatchReceived;
+            orderOptions.LastMatchHandler = UserFeed_OnLastMatchReceived;
+            orderOptions.DoneHandler = UserFeed_OnDoneReceived;
+
+
+            this.userFeed.OnMatchReceived += orderOptions.MatchHandler;
+            this.userFeed.OnLastMatchReceived += orderOptions.LastMatchHandler;
+            this.userFeed.OnDoneReceived += orderOptions.DoneHandler;
+            Console.WriteLine($"{tabbracket}Swing:{orderOptions.BuyPrice}-{orderOptions.SellPrice}");
+
+        }
+
+
+
+        private void UserFeed_OnDoneReceived(object sender, WebfeedEventArgs<Done> e)
+        {
+            var order = e.LastOrder;
+            Log.Information($"[{order.OrderId}] Handling UserFeed_OnDoneReceived");
+
+            if (bool.Parse(bool.TrueString))
+            {
+                Log.Information($"[{order.OrderId}] Skipping UserFeed_OnDoneReceived");
+                return;
+            }
+            if (order.Reason != DoneReasonType.Canceled)
+            {
+                // Avoid race condition and let individual matches process before processing done.
+                // by runnint the done processor on a seperate delayed task.
+                Task.Run(() =>
+                {
+                    //int retryCount = 0;
+                    if (!OrderManager.AllOrders.ContainsKey(order.OrderId))
+                    {
+                        string message = $"[{order.OrderId}] No existing order for done message";
+                        Log.Information(message);
+                        Console.WriteLine(message);
+                        return;
+                    }
+                    var tradeOrder = OrderManager.AllOrders[order.OrderId];
+                    var isMarket = tradeOrder.OrderType == OrderType.Market;
+                    var remaining = tradeOrder.Size - tradeOrder.FilledSize;
+                    var match = new Match
+                    {
+                        ProductId = order.ProductId,
+                        Price = order.Price,
+                        Time = order.Time,
+                        MakerOrderId = isMarket ? order.OrderId : Guid.Empty,
+                        Sequence = order.Sequence,
+                        Side = order.Side,
+                        Size = remaining,
+                        TakerOrderId = isMarket ? Guid.Empty : order.OrderId,
+                        TradeId = order.Sequence,
+                        Type = ResponseType.LastMatch
+                    };
+                    var args = new WebfeedEventArgs<Match>(match);
+                    System.Threading.Thread.Sleep(3000);
+                    UserFeed_OnMatchReceived(sender, args);
+                });
+            }
+
+        }
+
+        private void UserFeed_OnLastMatchReceived(object sender, WebfeedEventArgs<LastMatch> e)
+        {
+            var order = e.LastOrder;
+            var myOrder = OrderManager.TryGetByFirstIds(order.TakerOrderId, order.MakerOrderId);
+            if (myOrder == null)
+            {
+                string message = $"[{order.TakerOrderId}] [{order.MakerOrderId}] UserFeed_OnLastMatchReceived No existing order for Last Match: {order.ToJson()}";
+                Log.Information(message);
+                Console.WriteLine(message);
+                return;
+            }
+            Log.Information($"[{myOrder.Id}] Handling UserFeed_OnLastMatchReceived");
+
+            var match = new Match
+            {
+                ProductId = order.ProductId,
+                Price = order.Price,
+                Time = order.Time,
+                MakerOrderId = order.MakerOrderId,
+                Sequence = order.Sequence,
+                Side = order.Side,
+                Size = order.Size,
+                TakerOrderId = order.TakerOrderId,
+                TradeId = order.Sequence,
+                Type = ResponseType.LastMatch
+            };
+            var args = new WebfeedEventArgs<Match>(match);
+            UserFeed_OnMatchReceived(sender, args);
+
+
+
+        }
+        private void UserFeed_OnMatchReceived(object sender, WebfeedEventArgs<Match> e)
+        {
+
+            var feedOrder = e.LastOrder;
+            var myOrder = OrderManager.TryGetByFirstIds(feedOrder.TakerOrderId, feedOrder.MakerOrderId);
+            if (myOrder == null)
+            {
+                string message = $"[{feedOrder.TakerOrderId}] [{feedOrder.MakerOrderId}] UserFeed_OnMatchReceived No existing order for Match: {feedOrder.ToJson()}";
+                Log.Information(message);
+                Console.WriteLine(message);
+                return;
+            }
+
+            Log.Information($"[{myOrder.Id}] Handling UserFeed_OnMatchReceived");
+            bool filled = myOrder.FilledSize == myOrder.Size;
+            if (filled)
+            {
+                Log.Information($"[{myOrder.Id}] Removing filled order from {nameof(OrderManager)}.{nameof(OrderManager.AllOrders)}");
+                bool removed = OrderManager.AllOrders.TryRemove(myOrder.Id, out OrderResponse removedOrder);
+                Log.Information($"[{myOrder.Id}] Removal result: {removed}");
+            }
+            feedOrder.Side = myOrder.Side;
+            Log.Information($"[{myOrder.Id}] Adding match to {nameof(MatchQueue)}");
+            MatchQueue.Add(feedOrder);
+
+
+            var side = feedOrder.Side;
+            var productType = feedOrder.ProductId;
+            var options = SwingOptions[productType];
+            var product = OrderService.GetProduct(ProductType);
+            var increment = product.QuoteIncrement * 10;
+
+            if (side == OrderSide.Buy)
+            {
+                var queuedTotal = MatchQueue.MatchedBuys.QueueTotal;
+                if (queuedTotal >= 10m)
+                {
+                    var aggregate = MatchQueue.MatchedBuys.Aggregate();
+                    var size = aggregate.Size;
+                    var newOrder = OrderHelper.CreatePostOnlyOrder(productType, OrderSide.Sell, options.SellPrice, size);
+                    if (filled)
+                    {
+                        Log.Information($"[{myOrder.Id}] {nameof(OrderManager)}.{nameof(OrderManager.BuyOrders)}.TryRemove({myOrder.Id}, out)");
+                        OrderManager.BuyOrders.TryRemove(myOrder.Id, out OrderResponse removedBuy);
+                    }
+                    Log.Information($"[{myOrder.Id}] {nameof(OrderService)}.{nameof(OrderService.PlaceLimitSellOrder)}({newOrder.ToJson()})");
+                    OrderService.PlaceLimitSellOrder(newOrder);
+                }
+                else
+                {
+                    string message = $"[{myOrder.Id}] queued matched buy fill {queuedTotal.ToCurrency(myOrder.ProductId)}";
+                    Log.Information(message);
+                    Console.WriteLine(message);
+                }
+            }
+            else
+            {
+                var queuedTotal = MatchQueue.MatchedSells.QueueTotal;
+                if (queuedTotal >= 10m)
+                {
+                    var aggregate = MatchQueue.MatchedSells.Aggregate();
+                    var total = aggregate.Total;
+                    var svc = new AccountService();
+                    var fee = svc.MakerFeeRate;
+                    var totalRemaining = (total - fee);
+                    var amountRemaining = totalRemaining.ToPrecision(increment);
+
+
+                    var price = options.BuyPrice;
+                    var newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, amountRemaining);
+                    while (newOrder.TotalAmount > amountRemaining)
+                    {
+                        amountRemaining -= increment;
+                        newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, amountRemaining);
+                    }
+                    if (filled)
+                    {
+                        Log.Information($"[{myOrder.Id}] {nameof(OrderManager)}.{nameof(OrderManager.SellOrders)}.TryRemove({myOrder.Id}, out)");
+                        OrderManager.SellOrders.TryRemove(myOrder.Id, out OrderResponse removedSell);
+                    }
+
+                    Log.Information($"[{myOrder.Id}] {nameof(OrderService)}.{nameof(OrderService.PlaceLimitBuyOrder)}({newOrder.ToJson()})");
+                    OrderService.PlaceLimitBuyOrder(newOrder);
+                }
+                else
+                {
+                    string message = $"[{myOrder.Id}] queing matched sell fill {queuedTotal.ToCurrency(myOrder.ProductId)}";
+                    Log.Information(message);
+                    Console.WriteLine(message);
+
+                }
+
+            }
+
+        }
+
+
+
+        private void StopSwing(ProductType productType, SwingOrderOptions options)
+        {
+            if (options.LastMatchHandler != null)
+            {
+                this.userFeed.OnLastMatchReceived -= options.LastMatchHandler;
+                options.LastMatchHandler = null;
+            }
+
+            if (options.MatchHandler != null)
+            {
+                this.userFeed.OnMatchReceived -= options.MatchHandler;
+                options.MatchHandler = null;
+            }
+            if (SwingOptions.ContainsKey(productType))
+            {
+                SwingOptions.Remove(productType);
+            }
+            Console.WriteLine($" {tabbracket}Stop Swing: {options.BuyPrice}-{options.BuyPrice}");
         }
 
         private IEnumerable<Action> ParseFillsOptions(ArgumentList arguments)
@@ -192,11 +684,13 @@ namespace CoinbaseConsole
                 {
                     var orders = OrderManager.BuyOrders.Values.OrderBy(x => x.Price).ThenBy(x => x.Price * x.Size).ToList();
                     if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
-                    result.Add(() => Console.WriteLine($"Buys {orders.Count}"));
+                    var totalSize = orders.Sum(x => x.Size) - orders.Sum(x => x.FilledSize);
+                    var totalAmount = orders.Sum(x => (x.Size - x.FilledSize) * x.Price);
+                    result.Add(() => Console.WriteLine($"Buys {orders.Count} ({totalSize} {ProductType} {totalAmount.ToCurrency()})"));
                     result.AddRange(Enumerable.Range(0, orders.Count).Select(i =>
                         {
                             var x = orders[i];
-                            return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {x.Size} @ {x.Price.ToString("c")} = {(x.Size * x.Price).ToString("c")}"));
+                            return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {x.Size - x.FilledSize} @ {x.Price.ToCurrency(x.ProductId)} = {((x.Size - x.FilledSize) * x.Price).ToCurrency(x.ProductId)}"));
                         }
                     ));
                     if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
@@ -206,11 +700,13 @@ namespace CoinbaseConsole
                 {
                     var orders = OrderManager.SellOrders.Values.OrderBy(x => x.Price).ThenBy(x => x.Price * x.Size).ToList();
                     if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
-                    result.Add(() => Console.WriteLine($"Sells {orders.Count}"));
+                    var totalSize = orders.Sum(x => x.Size) - orders.Sum(x => x.FilledSize);
+                    var totalAmount = orders.Sum(x => (x.Size - x.FilledSize) * x.Price);
+                    result.Add(() => Console.WriteLine($"Sells {orders.Count} ({totalSize} {ProductType} {totalAmount.ToCurrency(Currency.USD)})"));
                     result.AddRange(Enumerable.Range(0, orders.Count).Select(i =>
                     {
                         var x = orders[i];
-                        return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {x.Size} @ {x.Price.ToString("c")} = {(x.Size * x.Price).ToString("c")}"));
+                        return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {x.Size - x.FilledSize} @ {x.Price.ToCurrency(x.ProductId)} = {((x.Size - x.FilledSize) * x.Price).ToCurrency(x.ProductId)}"));
                     }
                     ));
                     if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
@@ -235,18 +731,24 @@ namespace CoinbaseConsole
 
         public IEnumerable<Action> ParseChangeProductType(ArgumentList arguments)
         {
+
             List<Action> result = new List<Action>();
-            if (arguments.arg1.StartsWith("producttype."))
+
+            if (arguments.arg1 != null && arguments.arg1.StartsWith("producttype."))
             {
                 arguments.arg1 = arguments.arg1.Substring("producttype.".Length);
             }
-            if (arguments.arg1.ParseEnum<ProductType>(out ProductType productType))
+            if (string.IsNullOrEmpty(arguments.arg1))
+            {
+                result.Add(() => Console.WriteLine($"{nameof(ProductType)}. {ProductType}"));
+            }
+            else if (arguments.arg1.ParseEnum<ProductType>(out ProductType productType))
             {
                 result.Add(() => SetProductType(productType));
             }
             else
             {
-                result.Add(arguments.InvalidAction($"Unable to parse {nameof(ProductType)}"));
+                result.Add(arguments.InvalidAction($"Unable to parse {nameof(ProductType)}. Valid values: {string.Join(",", Enum.GetNames(typeof(ProductType)))}"));
             }
             return result;
         }
@@ -371,7 +873,7 @@ namespace CoinbaseConsole
                             int cancelBuyIndex = arguments.arg2.ToIndex();
                             if (cancelBuyIndex > -1)
                             {
-                                result.Add(() => OrderService.CancelBuy(cancelBuyIndex));
+                                result.Add(() => OrderService.CancelBuyByIndex(cancelBuyIndex));
                             }
                             else
                             {
@@ -392,7 +894,7 @@ namespace CoinbaseConsole
                             int cancelSellIndex = arguments.arg2.ToIndex();
                             if (cancelSellIndex > -1)
                             {
-                                result.Add(() => OrderService.CancelSell(cancelSellIndex));
+                                result.Add(() => OrderService.CancelSellByIndex(cancelSellIndex));
                             }
                             else
                             {
@@ -456,6 +958,21 @@ namespace CoinbaseConsole
         public List<Action> Actions;
     }
 
+    public class SwingOrderOptions
+    {
+        public decimal BuyPrice { get; set; }
+        public decimal SellPrice { get; set; }
+        //public EventHandler<WebfeedEventArgs<Done>> DoneHandler { get; internal set; }
+        public EventHandler<WebfeedEventArgs<Match>> MatchHandler { get; internal set; }
+        public EventHandler<WebfeedEventArgs<LastMatch>> LastMatchHandler { get; internal set; }
+        public EventHandler<WebfeedEventArgs<Done>> DoneHandler { get; internal set; }
+
+        public SwingOrderOptions(decimal buyPrice, decimal sellPrice)
+        {
+            this.BuyPrice = buyPrice;
+            this.SellPrice = sellPrice;
+        }
+    }
     public class SpreadOptions
     {
         public OrderSide OrderSide { get; set; }
@@ -485,10 +1002,10 @@ namespace CoinbaseConsole
                     });
                 }
 
-                else if (actions.Count > 0)
+                else if (actions.Count > 0)// need to get USD amount of order
                 {
                     amountRemaining += order.TotalAmount;
-                    actions.RemoveAt(actions.Count - 1);
+                    //actions.RemoveAt(actions.Count - 1);
                     if (order.OrderSide == OrderSide.Sell)
                     {
                         order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, OrderSize + amountRemaining);
@@ -562,9 +1079,9 @@ namespace CoinbaseConsole
 
     public class OrderManager : CoinbaseService
     {
-        public static Dictionary<Guid, OrderResponse> BuyOrders;
-        public static Dictionary<Guid, OrderResponse> SellOrders;
-        public static Dictionary<Guid, OrderResponse> AllOrders;
+        public static ConcurrentDictionary<Guid, OrderResponse> BuyOrders = new ConcurrentDictionary<Guid, OrderResponse>();
+        public static ConcurrentDictionary<Guid, OrderResponse> SellOrders = new ConcurrentDictionary<Guid, OrderResponse>();
+        public static ConcurrentDictionary<Guid, OrderResponse> AllOrders = new ConcurrentDictionary<Guid, OrderResponse>();
         public OrderManager()
         {
 
@@ -573,12 +1090,14 @@ namespace CoinbaseConsole
         {
             var svc = new CoinbaseService();
             var statusList = new[] { OrderStatus.Active, OrderStatus.Open, OrderStatus.Pending, };
-            var orders = svc.client.OrdersService.GetAllOrdersAsync(statusList).Result.SelectMany(x => x).ToList();
-            AllOrders = orders.ToDictionary(x => x.Id, x => x);
+            var orders = OrderService.GetAllOrders(statusList);
+            //var orders = svc.client.OrdersService.GetAllOrdersAsync(statusList).Result.SelectMany(x => x).ToList();
+
+            AllOrders = orders.ToConcurrentDictionary(x => x.Id, x => x);
             BuyOrders = orders.Where(x => x.Side == OrderSide.Buy).OrderBy(x => x.Price)
-                .ToDictionary(x => x.Id, x => x);
+                .ToConcurrentDictionary(x => x.Id, x => x);
             SellOrders = orders.Where(x => x.Side == OrderSide.Sell).OrderBy(x => x.Price)
-                .ToDictionary(x => x.Id, x => x);
+                .ToConcurrentDictionary(x => x.Id, x => x);
         }
 
         public static OrderResponse GetOrderByIndex(int orderIndex)
@@ -614,72 +1133,163 @@ namespace CoinbaseConsole
             return SellOrders.Keys.ToArray()[sellOrderIndex];
         }
 
+        public static void AddOrUpdate(Guid orderId)
+        {
 
+            var order = OrderService.GetOrderById(orderId);
+
+            AllOrders.AddOrUpdate(order.Id, order, (id, existing) => order);
+            var side = order.Side;
+            if (side == OrderSide.Buy)
+            {
+                BuyOrders.AddOrUpdate(order.Id, order, (id, existing) => order);
+            }
+            else
+            {
+                SellOrders.AddOrUpdate(order.Id, order, (id, existing) => order);
+            }
+        }
+        public static void AddOrUpdate(Open order)
+        {
+            AddOrUpdate(order.OrderId);
+        }
+
+        public static void AddOrUpdate(Done doneOrder)
+        {
+            if (doneOrder.Reason == DoneReasonType.Canceled)
+            {
+                if (AllOrders.ContainsKey(doneOrder.OrderId))
+                {
+                    var order = AllOrders[doneOrder.OrderId];
+                    order.DoneReason = doneOrder.Reason.ToString();
+                    order.FilledSize = order.Size - doneOrder.RemainingSize;
+                    order.DoneAt = doneOrder.Time.UtcDateTime;
+                }
+            }
+
+        }
+
+        public static void AddOrUpdate(Received order)
+        {
+            AddOrUpdate(order.OrderId);
+        }
+
+        public static OrderResponse TryGetById(Guid orderId)
+        {
+            if (AllOrders.ContainsKey(orderId))
+            {
+                return AllOrders[orderId];
+            }
+            return null;
+        }
+        public static OrderResponse TryGetByFirstIds(params Guid[] orderIds)
+        {
+            OrderResponse result = null;
+            for (var i = 0; result == null && i < orderIds.Length; i++)
+            {
+                var orderId = orderIds[i];
+                result = TryGetById(orderId);
+            }
+            return result;
+        }
     }
 
     public class OrderService : CoinbaseService
     {
         public static OrderService service = new OrderService();
-        public static List<Guid> CancelAllOrders()
+
+        public static TResult TryExecute<TResult>(Func<TResult> del)
         {
-            var task = service.client.OrdersService.CancelAllOrdersAsync();
-            var response = task.Result;
-            return response.OrderIds.ToList();
+            try
+            {
+                return del();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"{ex.Message}: {ex.ToString()}");
+                return default;
+            }
         }
+
         public static IEnumerable<Guid> CancelAllOrders(Func<OrderResponse, bool> filter)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelAllOrders)}(Func<OrderResponse, bool> filter)");
             var orders = GetAllOrders();
             var cancellations = orders.Where(filter).ToList();
             return CancelOrders(cancellations.Select(x => x.Id));
         }
 
         public static IEnumerable<Guid> CancelAllSells()
-            => CancelAllOrders(x => x.Side == OrderSide.Sell);
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelAllSells)}");
+            return CancelAllOrders(x => x.Side == OrderSide.Sell);
+        }
 
         public static IEnumerable<Guid> CancelAllBuys()
-      => CancelAllOrders(x => x.Side == OrderSide.Buy);
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelAllBuys)}");
+            return CancelAllOrders(x => x.Side == OrderSide.Buy);
+        }
 
         public static IEnumerable<Guid> CancelOrders(IEnumerable<Guid> orderIds)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelOrders)}({string.Join(", ", orderIds)})");
             foreach (var orderId in orderIds)
             {
                 yield return CancelOrderById(orderId);
             }
         }
 
-        private static Guid CancelOrderById(Guid orderId)
+
+
+        private static Dictionary<ProductType, Product> Products = null;
+        public static Product GetProduct(ProductType productType)
         {
-            var task = service.client.OrdersService.CancelOrderByIdAsync(orderId.ToString());
-            var result = task.Result;
-            return result.OrderIds.First();
+            if (Products == null)
+            {
+                Log.Information("Caching products");
+                var products = TryExecute(() => service.client.ProductsService.GetAllProductsAsync().Result);
+                if (products == null)
+                {
+                    string error = $"{nameof(CoinbasePro.Services.Products.ProductsService)}.{nameof(CoinbasePro.Services.Products.ProductsService.GetAllProductsAsync)} returned null";
+                    Log.Error(error);
+                    throw new Exception($"Unable to get get products: {error}");
+                }
+                else
+                {
+                    products = products.Where(x => x.BaseCurrency != Currency.Unknown && x.QuoteCurrency != Currency.Unknown);
+                    Products = products.ToDictionary(x => new CurrencyPair(x.QuoteCurrency, x.BaseCurrency).ProductType, x => x);
+                    Log.Information($"Retrieved {Products.Count} products: {string.Join(", ", Products.Keys)}");
+                }
+
+            }
+            return Products[productType];
         }
 
-        public static List<OrderResponse> GetAllOrders()
-        {
-            var task = service.client.OrdersService.GetAllOrdersAsync();
-            var result = task.Result;
-            return result.SelectMany(lst => lst.Select(x => x)).ToList();
-        }
 
-        internal static Guid CancelBuy(int cancelBuyIndex)
+        internal static Guid CancelBuyByIndex(int cancelBuyIndex)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelBuyByIndex)}({cancelBuyIndex})");
             Guid orderId = OrderManager.GetBuyOrderIdByIndex(cancelBuyIndex);
             return CancelOrderById(orderId);
         }
 
-        internal static Guid CancelSell(int cancelSellIndex)
+        internal static Guid CancelSellByIndex(int cancelSellIndex)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelSellByIndex)}({cancelSellIndex})");
             Guid orderId = OrderManager.GetSellOrderIdByIndex(cancelSellIndex);
             return CancelOrderById(orderId);
         }
 
         internal static TradeOrder CreatePostOnlyOrder(ProductType productType, OrderSide orderSide, decimal currentPrice, decimal orderSize)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CreatePostOnlyOrder)}");
             return OrderHelper.CreatePostOnlyOrder(productType, orderSide, currentPrice, orderSize);
         }
 
         public static OrderResponse PlaceOrder(TradeOrder order)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceOrder)}");
             if (order.Market)
             {
                 return PlaceMarketOrder(order);
@@ -693,6 +1303,7 @@ namespace CoinbaseConsole
 
         public static OrderResponse PlaceLimitOrder(TradeOrder order)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceLimitOrder)}");
             if (order.OrderSide == OrderSide.Buy)
             {
                 return PlaceLimitBuyOrder(order);
@@ -703,27 +1314,9 @@ namespace CoinbaseConsole
             }
         }
 
-        public static OrderResponse PlaceLimitSellOrder(TradeOrder order)
-        {
-            var t =
-                  service.client.OrdersService
-                  .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
-                  clientOid: order.ClientId);
-            return t.Result;
-
-        }
-
-        public static OrderResponse PlaceLimitBuyOrder(TradeOrder order)
-        {
-            var t =
-              service.client.OrdersService
-              .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
-              clientOid: order.ClientId);
-            return t.Result;
-        }
-
         public static OrderResponse PlaceMarketOrder(TradeOrder order)
         {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceMarketOrder)}");
             if (order.OrderSide == OrderSide.Buy)
             {
                 return PlaceMarketBuyOrder(order);
@@ -736,13 +1329,139 @@ namespace CoinbaseConsole
 
         public static OrderResponse PlaceMarketSellOrder(TradeOrder order)
         {
-            throw new NotImplementedException();
+            Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceMarketSellOrder)}");
+            var error = $"{nameof(OrderService)}.{nameof(PlaceMarketSellOrder)} is not implemented";
+            Log.Error(error);
+            throw new NotImplementedException(error);
         }
 
         public static OrderResponse PlaceMarketBuyOrder(TradeOrder order)
         {
-            throw new NotImplementedException();
+            Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceMarketBuyOrder)}");
+            var error = $"{nameof(OrderService)}.{nameof(PlaceMarketBuyOrder)} is not implemented";
+            Log.Error(error);
+            throw new NotImplementedException(error);
         }
+
+
+        public static OrderResponse GetOrderById(Guid orderId)
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(GetOrderById)}({orderId})");
+            return GetOrderById(orderId.ToString());
+        }
+
+
+        public static List<Guid> CancelAllOrders()
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelAllOrders)}");
+            List<Guid> result = TryExecute(() => service.client.OrdersService.CancelAllOrdersAsync().Result.OrderIds.ToList());
+            if (result != null)
+            {
+                Log.Information($"Cancelled {string.Join(", ", result)}");
+            }
+            return result;
+        }
+
+
+
+        public static List<OrderResponse> GetAllOrders()
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(GetAllOrders)}");
+            var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync().Result);
+            var result = apiResult.SelectMany(lst => lst.Select(x => x)).ToList();
+            Log.Information($"Retrieved orders {string.Join(", ", result.Select(x => x.Id))}");
+            return result;
+        }
+
+        public static List<OrderResponse> GetAllOrders(OrderStatus[] statusList)
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(GetAllOrders)}({string.Join(", ", statusList)})");
+            var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync(statusList).Result);
+            var result = apiResult?.SelectMany(lst => lst.Select(x => x)).ToList();
+            Log.Information($"Retrieved orders {string.Join(", ", result.Select(x => x.Id))}");
+            return result;
+        }
+
+
+        public static OrderResponse GetOrderById(string orderId)
+        {
+            Log.Information($"[{orderId}] Called {nameof(OrderService)}.{nameof(GetOrderById)}({orderId})");
+            var result = TryExecute(() => service.client.OrdersService.GetOrderByIdAsync(orderId.ToString()).Result);
+            Log.Information($"[{orderId}] Result: {result.ToJson()}");
+            return result;
+
+        }
+        private static Guid CancelOrderById(Guid orderId)
+        {
+            Log.Information($"[{orderId}] Called {nameof(OrderService)}.{nameof(CancelOrderById)}({orderId})");
+            var order = GetOrderById(orderId);
+            var result = TryExecute(() =>
+            {
+                var task = service.client.OrdersService.CancelOrderByIdAsync(orderId.ToString());
+                return task.Result.OrderIds.First();
+            });
+
+            Log.Information($"[{orderId}] Canceled: {orderId} - {order.ToDebugString()}");
+            return result;
+        }
+
+        public static OrderResponse PlaceLimitSellOrder(TradeOrder order)
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceLimitSellOrder)}: {order.ToJson()}");
+            var result = TryExecute(() =>
+                  service.client.OrdersService
+                  .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
+                  clientOid: order.ClientId).Result);
+
+            if (result is null)
+            {
+                string error = "Failed to place limit sell order";
+                Log.Error(error);
+                throw new Exception(error);
+            }
+            else
+            {
+                Log.Information($"[{result.Id}] Placed limit sell order: {result.ToJson()}");
+            }
+            return result;
+
+        }
+
+        public static OrderResponse PlaceLimitBuyOrder(TradeOrder order)
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceLimitBuyOrder)}: {order.ToJson()}");
+            var result = TryExecute(() =>
+                service.client.OrdersService
+                .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
+                clientOid: order.ClientId).Result);
+
+            if (result is null)
+            {
+                string error = "Failed to place limit buy order";
+                Log.Error(error);
+                throw new Exception(error);
+            }
+            else
+            {
+                Log.Information($"[{result.Id}] Placed limit buy order: {result.ToJson()}");
+            }
+            return result;
+        }
+
+
+
+
+        internal static CancelOrderResponse CancelOrder(OrderResponse order)
+        {
+            Log.Information($"Called {nameof(OrderService)}.{nameof(CancelOrder)}: {order.ToJson()}");
+            var result = TryExecute(() => service.client.OrdersService.CancelOrderByIdAsync(order.Id.ToString()).Result);
+            if (result != null)
+            {
+                Log.Information($"Canceled order: {result.ToJson()}");
+            }
+            return result;
+        }
+
 
     }
 

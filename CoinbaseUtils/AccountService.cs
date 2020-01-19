@@ -25,8 +25,21 @@ namespace CoinbaseUtils
         public static decimal GetAccountBalance(ProductType productType, OrderSide orderSide)
             => Instance.GetBalance(productType, orderSide);
 
+        public static DateTime CacheDate { get; private set; }
+        public static TimeSpan CacheExpiration;
+        public static decimal CachedMakerFeeRate { get; private set; }
+        public static decimal CachedTakerFeeRate { get; private set; }
+        public static Dictionary<Currency, Account> AllAccountsCache { get; private set; }
         static AccountService()
         {
+            CacheExpiration = TimeSpan.FromMinutes(15);
+            RefreshCache();
+          
+        }
+        static void RefreshCache()
+        {
+            CacheDate = DateTime.UtcNow;
+            Console.WriteLine($"[{CacheDate.ToJson()}] Refreshing accounts cache");
             var d = new Dictionary<string, Currency>();
             foreach (var currencyName in Enum.GetNames(typeof(Currency)))
             {
@@ -41,10 +54,10 @@ namespace CoinbaseUtils
                 AccountsService.GetAllAccountsAsync().Result
                 .ToDictionary(x => x.Currency, x => x);
             Instance = new AccountService();
+            CacheDate = DateTime.UtcNow;
+
         }
-        public static decimal CachedMakerFeeRate { get; private set; }
-        public static decimal CachedTakerFeeRate { get; private set; }
-        public static Dictionary<Currency, Account> AllAccountsCache { get; }
+  
 
         #endregion
 
@@ -58,6 +71,12 @@ namespace CoinbaseUtils
 
         public AccountService()
         {
+            var now = DateTime.UtcNow;
+            if (now.Subtract(CacheDate)> CacheExpiration)
+            {
+                RefreshCache();
+            }
+
             this.AllAccounts = AllAccountsCache;
             this.MakerFeeRate = CachedMakerFeeRate;
             this.TakerFeeRate = CachedTakerFeeRate;
@@ -65,7 +84,7 @@ namespace CoinbaseUtils
 
         public decimal GetBalance(Currency currency)
         {
-            Account account = Instance.AllAccounts[currency];
+            Account account = Instance.AllAccounts[currency] = (new CoinbaseService().client.AccountsService.GetAccountByIdAsync(Instance.AllAccounts[currency].Id.ToString())).Result;  
             return account.Available;
         }
         public decimal GetBalance(ProductType productType, OrderSide orderSide)

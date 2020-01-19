@@ -1,6 +1,13 @@
-﻿using Newtonsoft.Json;
+﻿using CoinbasePro.Services.Orders.Models.Responses;
+using CoinbasePro.Shared.Types;
+using CoinbasePro.WebSocket.Models.Response;
+using Newtonsoft.Json;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.Serialization;
+
 namespace CoinbaseUtils
 {
     public static class Extensions
@@ -51,15 +58,33 @@ namespace CoinbaseUtils
             {
                 Enum.TryParse<TEnum>(name, out TEnum parsed);
                 result.Add(name, parsed);
+                var enumMember = parsed.ToEnumMemberAttrValue();
+                if (enumMember != name)
+                {
+                    result.Add(enumMember, parsed);
+                }
             }
+
             return result;
         }
+
+        public static string ToEnumMemberAttrValue(this Enum @enum)
+        {
+            var attr =
+                @enum.GetType().GetMember(@enum.ToString()).FirstOrDefault()?.
+                    GetCustomAttributes(false).OfType<EnumMemberAttribute>().
+                    FirstOrDefault();
+            if (attr == null)
+                return @enum.ToString();
+            return attr.Value;
+        }
+
         public static bool ParseEnum<TEnum>(this string value, out TEnum result)
             where TEnum : struct, Enum
         {
             result = default(TEnum);
             var dict = result.GetEnumDictionary<TEnum>();
-            foreach(var kvp in dict)
+            foreach (var kvp in dict)
             {
                 if (string.Compare(kvp.Key, value, true) == 0)
                 {
@@ -70,6 +95,12 @@ namespace CoinbaseUtils
             return false;
         }
 
+        public static ConcurrentDictionary<TKey, TValue> ToConcurrentDictionary<TSource, TKey, TValue>
+            (this IEnumerable<TSource> source, Func<TSource, TKey> keySelector, Func<TSource, TValue> elementSelector)
+            => new ConcurrentDictionary<TKey, TValue>(source.Select(x => new KeyValuePair<TKey, TValue>(keySelector(x), elementSelector(x))));
+
+        public static ConcurrentDictionary<TKey, TValue> ToConcurrent<TKey, TValue>(this Dictionary<TKey, TValue> data)
+            => new ConcurrentDictionary<TKey, TValue>(data);
         public static bool ParseDecimal(this string value, out decimal result)
         {
             var pctIdx = value.IndexOf("%");
@@ -90,7 +121,7 @@ namespace CoinbaseUtils
             }
             else if (dollarIdx != -1)
             {
-                var decimalPart = (value.Substring(dollarIdx+1) ?? "").Trim();
+                var decimalPart = (value.Substring(dollarIdx + 1) ?? "").Trim();
                 bool parsed = decimal.TryParse(decimalPart, out result);
                 return parsed;
             }
@@ -101,6 +132,82 @@ namespace CoinbaseUtils
             }
 
 
+        }
+        public static string ToCurrency(this decimal value) => value.ToCurrency(Currency.USD);
+        public static string ToCurrency(this decimal value, Currency currency)
+        {
+
+
+            var defaultPrecision = 2;
+            int precision = defaultPrecision;
+            switch (currency)
+            {
+                default:
+                    break;
+            }
+            return Math.Round(value, precision).ToString();
+        }
+        public static string ToCurrency(this decimal value, ProductType productType)
+        {
+            var pair = new CurrencyPair(productType);
+
+            var defaultPrecision = 2;
+            int precision = defaultPrecision;
+            switch (productType)
+            {
+                case ProductType.DaiUsdc:
+                    precision = 8;
+                    break;
+                default:
+                    throw new NotImplementedException("ToCurrency({productType})");
+            }
+            return Math.Round(value, precision).ToString();
+        }
+        public static Decimal ToPrecision(this decimal value, decimal precision)
+        {
+            var mult = 1m / precision;
+            decimal temp = value * mult;
+            var truncated = Math.Truncate(temp);
+            var result = truncated / mult;
+            return result;
+        }
+        public static int Precision(this decimal value)
+        {
+            return value.ToString().Trim('0').Split('.')[1].Length;
+        }
+        public static string ToDebugString(this CoinbasePro.Services.Orders.Models.Responses.OrderResponse x)
+        {
+            return $"{x.Id}: {x.Size} @ {x.Price.ToCurrency(x.ProductId)} ({x.FillFees.ToCurrency(x.ProductId)}) = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
+        }
+        public static string ToDebugString(this Open x)
+        {
+            return $"Open: {x.ProductId} {x.Side} {x.RemainingSize} @ {x.Price.ToCurrency(x.ProductId)} = ({(x.Price * x.RemainingSize).ToCurrency(x.ProductId)})";
+        }
+
+        public static string ToDebugString(this Received x)
+        {
+            return $"Received: {x.OrderId} {x.ProductId} {x.Side} {x.Size} @ {x.Price.ToCurrency(x.ProductId)} = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
+        }
+
+        public static string ToDebugString(this Done x)
+        {
+            return $"Done: {x.OrderId} {x.ProductId} {x.Side} {x.Reason} @ {x.Price.ToCurrency(x.ProductId)} = ({(x.Price * x.RemainingSize).ToCurrency(x.ProductId)})";
+        }
+
+        public static string ToDebugString(this Match x)
+        {
+            return $"Match: {x.ToJson()}";
+        }
+
+        public static string ToDebugString(this LastMatch x)
+        {
+            return $"LastMatch: {x.ToJson()}";
+        }
+
+
+        public static string ToDebugString(this Ticker x)
+        {
+            return $"Ticker: {x.ProductId} Buy: {x.BestBid.ToCurrency(x.ProductId)} Ask: {x.BestAsk.ToCurrency(x.ProductId)} Last: {x.LastSize} @ {x.Price.ToCurrency(x.ProductId)} = {(x.LastSize * x.Price).ToCurrency(x.ProductId)}";
         }
     }
 }
