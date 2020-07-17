@@ -76,6 +76,10 @@ namespace CoinbaseConsole
             {
                 var line = Console.ReadLine();
                 var args = ParseArguments(line);
+                if (args.Actions.Count == 0)
+                {
+                    Console.WriteLine("invalid actions");
+                }
                 args.Execute();
 
             }
@@ -205,6 +209,10 @@ namespace CoinbaseConsole
                 commandActions.AddRange(ParseCancellationOptions(arguments));
                 //cancel all, cancel buys, cancel sells, cancel all buys, cancel all sells
             }
+            else if (arg0 == "fees")
+            {
+                commandActions.AddRange(ParseFeeOptions(arguments));
+            }
             else if (arg0 == "volume")
             {
                 commandActions.AddRange(ParseVolumeOptions(arguments));
@@ -253,6 +261,13 @@ namespace CoinbaseConsole
             result.Actions = commandActions;
             return result;
 
+        }
+        private IEnumerable<Action> ParseFeeOptions(ArgumentList arguments)
+        {
+            var service = new AccountService(true);
+            var result = new List<Action>();
+            result.Add(() => Console.WriteLine($"{tabbracket}: Maker Fee: {service.MakerFeeRate.ToString("P")} Taker Fee: {service.TakerFeeRate.ToString("P")}"));
+            return result;
         }
 
         private IEnumerable<Action> ParseVolumeOptions(ArgumentList arguments)
@@ -992,13 +1007,14 @@ namespace CoinbaseConsole
             while (amountRemaining > 0)
             {
                 var order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, OrderSize);
-                amountRemaining -= order.TotalAmount;
+                amountRemaining -=  order.TotalAmount;
                 if (amountRemaining >= 0m && order.IsValid())
                 {
                     actions.Add(() =>
                     {
                         OrderService.PlaceOrder(order);
                         Console.WriteLine($"{DateTime.Now}: Placed order {order}");
+                        System.Threading.Thread.Sleep(100);
                     });
                 }
 
@@ -1028,6 +1044,7 @@ namespace CoinbaseConsole
                         {
                             OrderService.PlaceOrder(order);
                             Console.WriteLine($"{DateTime.Now}: Placed order {order}");
+                            System.Threading.Thread.Sleep(100);
                         });
                         break;
                     }
@@ -1137,7 +1154,11 @@ namespace CoinbaseConsole
         {
 
             var order = OrderService.GetOrderById(orderId);
-
+            if (order == null)
+            {
+                AllOrders.TryRemove(orderId, out OrderResponse ex);
+                return;
+            }
             AllOrders.AddOrUpdate(order.Id, order, (id, existing) => order);
             var side = order.Side;
             if (side == OrderSide.Buy)
@@ -1249,6 +1270,7 @@ namespace CoinbaseConsole
             {
                 Log.Information("Caching products");
                 var products = TryExecute(() => service.client.ProductsService.GetAllProductsAsync().Result);
+                var productIds = products.Select(x => x.Id).OrderBy(x => x).ToList();
                 if (products == null)
                 {
                     string error = $"{nameof(CoinbasePro.Services.Products.ProductsService)}.{nameof(CoinbasePro.Services.Products.ProductsService.GetAllProductsAsync)} returned null";
@@ -1258,10 +1280,12 @@ namespace CoinbaseConsole
                 else
                 {
                     products = products.Where(x => x.BaseCurrency != Currency.Unknown && x.QuoteCurrency != Currency.Unknown);
-                    Products = products.ToDictionary(x => new CurrencyPair(x.QuoteCurrency, x.BaseCurrency).ProductType, x => x);
+                    //Products = products.ToDictionary(x => new CurrencyPair(x.QuoteCurrency, x.BaseCurrency).ProductType, x => x);
+                    Products = products.Where(x => x.Id != ProductType.Unknown)
+                        .ToDictionary(x => x.Id, x => x);
                     Log.Information($"Retrieved {Products.Count} products: {string.Join(", ", Products.Keys)}");
                 }
-
+            
             }
             return Products[productType];
         }
@@ -1378,6 +1402,7 @@ namespace CoinbaseConsole
             Log.Information($"Called {nameof(OrderService)}.{nameof(GetAllOrders)}({string.Join(", ", statusList)})");
             var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync(statusList).Result);
             var result = apiResult?.SelectMany(lst => lst.Select(x => x)).ToList();
+
             Log.Information($"Retrieved orders {string.Join(", ", result.Select(x => x.Id))}");
             return result;
         }
@@ -1415,9 +1440,10 @@ namespace CoinbaseConsole
 
             if (result is null)
             {
-                string error = "Failed to place limit sell order";
+                string error = $"Failed to place limit sell order: {order}";
                 Log.Error(error);
-                throw new Exception(error);
+                Console.WriteLine(error);
+                //throw new Exception(error);
             }
             else
             {
@@ -1437,9 +1463,10 @@ namespace CoinbaseConsole
 
             if (result is null)
             {
-                string error = "Failed to place limit buy order";
+                string error = $"Failed to place limit sell order: {order}";
                 Log.Error(error);
-                throw new Exception(error);
+                Console.Write(error);
+                //throw new Exception(error);
             }
             else
             {
@@ -1474,7 +1501,7 @@ namespace CoinbaseConsole
             decimal total = price * orderSize;
             decimal fee = total * feerate;
             var totalAmount = total + fee;
-            return new TradeOrder(productType, orderSide, price, orderSize, fee, totalAmount);
+            return new TradeOrder(productType, orderSide, price, orderSize, fee, feerate, totalAmount);
 
         }
     }
@@ -1486,18 +1513,20 @@ namespace CoinbaseConsole
         public decimal Price { get; set; }
         public decimal OrderSize { get; set; }
         public decimal Fee { get; set; }
+        public decimal FeeRate { get; set; }
         public decimal TotalAmount { get; set; }
 
         public bool Market { get; set; }
 
         public Guid ClientId { get; set; }
-        public TradeOrder(ProductType productType, OrderSide orderSide, decimal price, decimal orderSize, decimal fee, decimal totalAmount)
+        public TradeOrder(ProductType productType, OrderSide orderSide, decimal price, decimal orderSize, decimal fee, decimal feeRate, decimal totalAmount)
         {
             this.ProductType = productType;
             this.OrderSide = orderSide;
             this.Price = price;
             this.OrderSize = orderSize;
             this.Fee = fee;
+            this.FeeRate = feeRate;
             this.TotalAmount = totalAmount;
             this.ClientId = Guid.NewGuid();
         }
@@ -1509,6 +1538,8 @@ namespace CoinbaseConsole
         }
         internal bool IsValid()
         {
+            //ISSUE: Cash market orders require min 10. Limit orders vary by product.
+            if (OrderSide == OrderSide.Sell) return OrderSize >= .1m;
             return TotalAmount >= 10;
             //throw new NotImplementedException();
         }

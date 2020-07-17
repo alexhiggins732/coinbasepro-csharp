@@ -212,6 +212,7 @@ namespace UtilsWinFormApp
             rdr.Tick += Rdr_Tick;
             rdr.Stopped += Rdr_Stopped;
             rdr.Start();
+            btnStart.Text = "Stop";
         }
 
         private void Rdr_Stopped(object sender, EventArgs e)
@@ -262,8 +263,16 @@ namespace UtilsWinFormApp
 
         private void btnUpdateDb_Click(object sender, EventArgs e)
         {
+            //MaxProfitAnalyzer.Run();
+
             AssuerLatestCandles(true);
             MessageBox.Show("Updated");
+        }
+
+        private void btnOpenHPMTFMA_Click(object sender, EventArgs e)
+        {
+            var frm = new HPMTFMA();
+            frm.Show();
         }
     }
 
@@ -276,7 +285,7 @@ namespace UtilsWinFormApp
         private IEnumerator<Candle> candleEnumerator;
         Timer timer;
         public Candle Current => candleEnumerator.Current;
-        public List<decimal> History => crossOver.History;
+        public decimal[] History => crossOver.History;
         public MultiTimeFrameSma<decimal> MtfSma => crossOver.SimpleMovingAverages;
         public Dictionary<int, SmaBase<decimal>> SimpleMovingAverages => MtfSma.SimpleMovingAverages;
         public decimal[] Averages => crossOver.SimpleMovingAverages.Averages;

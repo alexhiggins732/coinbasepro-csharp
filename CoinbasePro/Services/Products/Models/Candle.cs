@@ -24,5 +24,6 @@ namespace CoinbasePro.Services.Products.Models
 
         [JsonProperty(Order = 6)]
         public decimal Volume { get; set; }
+
     }
 }

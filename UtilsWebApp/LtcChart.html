@@ -1,0 +1,50 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title></title>
+    <script src='https://cdn.plot.ly/plotly-latest.min.js'></script>
+    <script src='js/ltcusd-hour24.js'></script>
+    <style type="text/css">
+        #myDiv {
+            height: 800px;
+        }
+    </style>
+    <script>
+        function bindlayout(layout) {
+            document.getElementById('x0').value = layout.xaxis.range[0];
+            document.getElementById('x1').value = layout.xaxis.range[1];
+            document.getElementById('y0').value = layout.yaxis.range[0];
+            document.getElementById('y1').value = layout.yaxis.range[1];
+        }
+
+        function doUpdate() {
+            // update only values within nested objects
+            var update = {
+                'xaxis.range': [document.getElementById('x0').value,  document.getElementById('x1').value],   // updates the xaxis range
+                'yaxis.range': [document.getElementById('y0').value, document.getElementById('y1').value]    // updates the end of the yaxis range
+            };
+            Plotly.relayout(graphDiv, update)
+        }
+
+    </script>
+</head>
+<body>
+    <div id='myDiv'><!-- Plotly chart will be drawn inside this DIV --></div>
+    <script src='js/PlotLtc.js'></script>
+
+    <div>
+        X0: <input id="x0" type="text" />
+        <br />
+        X1: <input id="x1" type="text" />
+        <br />
+        Y0: <input id="y0" type="text" />
+        <br />
+        Y1: <input id="y1" type="text" />
+        <br />
+        <input type="button" value="Update" onclick="doUpdate()"/>
+
+    </div>
+
+</body>
+</html>

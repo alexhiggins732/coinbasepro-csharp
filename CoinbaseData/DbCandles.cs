@@ -42,6 +42,18 @@ namespace CoinbaseData
                 Volume = dbCandle.Volume
             };
         }
+        public static implicit operator DbCandle(Candle dbCandle)
+        {
+            return new DbCandle
+            {
+                Time = dbCandle.Time,
+                Low = dbCandle.Low,
+                High = dbCandle.High,
+                Open = dbCandle.Open,
+                Close = dbCandle.Close,
+                Volume = dbCandle.Volume
+            };
+        }
 
     }
     public class DbCandles
@@ -87,6 +99,32 @@ namespace CoinbaseData
             }
         }
 
+        public static DateTime GetMinDbCandleDateForSampleSizeAndStartDate
+            (ProductType productType, CandleGranularity granularity, DateTime startDate, int sampleSize)
+        {
+            var tableName = $"{productType}{granularity}";
+            var query = $@"select time from (
+                   select time, 
+	                ROW_NUMBER() over (order by time desc) as RowNum
+	                from [{tableName}]
+	                where time<@startDate
+              ) a
+              where RowNum =@sampleSize";
+            using (var conn = new SqlConnection(TableHelper.ConnectionString))
+            {
+                var result = conn.QuerySingleOrDefault<DateTimeOffset?>(query, new { startDate, sampleSize });
+                if (result == null)
+                {
+                    var minDate = GetMinDbCandleDate(productType, granularity);
+                    int granMinutes = ((int)granularity) / 60;
+                    result = minDate.AddMinutes(granMinutes * sampleSize);
+                    result = conn.QuerySingle<DateTimeOffset>($"select top 1 time from [{tableName}] where time>=@result order by time",
+                        new { result });
+                }
+                return result.Value.UtcDateTime;
+            }
+        }
+
         public static void DeleteLatest(ProductType productType, CandleGranularity granularity)
         {
             var time = GetMaxDbCandleDate(productType, granularity);
@@ -115,6 +153,33 @@ namespace CoinbaseData
 
             }
         }
+        public static bool CandleTableExists(ProductType productType, CandleGranularity granularity)
+        {
+            var tableName = $"{productType}{granularity}";
+            var query = $"select count(0) from sys.tables where name=@tableName";
+            using (var conn = new SqlConnection(TableHelper.ConnectionString))
+            {
+                conn.Open();
+                int count = conn.QuerySingle<int>(query, new { tableName });
+                return count > 0;
+            }
+        }
+
+        public static void AssureCandlesTables(ProductType productType)
+        {
+            TableHelper.AssureCandlesTables(productType);
+        }
+
+        public static Candle GetLastCandleBeforeDate(ProductType productType, CandleGranularity granularity, DateTime startDate)
+        {
+            var tableName = $"{productType}{granularity}";
+            var query = $"select top 1 * from {tableName} where [time] <@startDate order by [time] desc";
+            using (var conn = new SqlConnection(TableHelper.ConnectionString))
+            {
+                var result = conn.QuerySingle<DbCandle>(query, new { startDate });
+                return result;
+            }
+        }
 
         public static DateTime GetMinDbCandleDate(ProductType productType, CandleGranularity granularity)
         {
@@ -122,8 +187,20 @@ namespace CoinbaseData
             var query = $"select min([time]) from {tableName}";
             using (var conn = new SqlConnection(TableHelper.ConnectionString))
             {
-                var result = conn.QuerySingle<DateTimeOffset>(query);
-                return result.UtcDateTime;
+                var result = conn.QuerySingleOrDefault<DateTimeOffset?>(query);
+                return (result.HasValue ? result.Value : default(DateTimeOffset)).UtcDateTime;
+            }
+        }
+
+        public static DateTime GetMinDbCandleDateAfterDate(ProductType productType, CandleGranularity granularity, DateTime startDate)
+        {
+            var tableName = $"{productType}{granularity}";
+            var query = $"select min([time]) from {tableName} where [time]>=@startDate";
+            using (var conn = new SqlConnection(TableHelper.ConnectionString))
+            {
+                var result = conn.QuerySingle<DateTimeOffset?>(query, new { startDate });
+                return (result.HasValue ? result.Value : default(DateTimeOffset)).UtcDateTime;
+
             }
         }
 
@@ -133,11 +210,21 @@ namespace CoinbaseData
             var query = $"select max([time]) from {tableName}";
             using (var conn = new SqlConnection(TableHelper.ConnectionString))
             {
-                var result = conn.QuerySingle<DateTimeOffset>(query);
-                return result.UtcDateTime;
+                var result = conn.QuerySingleOrDefault<DateTimeOffset?>(query);
+                return (result.HasValue ? result.Value : default(DateTimeOffset)).UtcDateTime;
             }
         }
 
+        public static int GetCandleCountBeforeDate(ProductType productType, CandleGranularity granularity, DateTime startDate)
+        {
+            var tableName = $"{productType}{granularity}";
+            var query = $"select count(0) from {tableName} where [time]<@startDate";
+            using (var conn = new SqlConnection(TableHelper.ConnectionString))
+            {
+                var result = conn.QuerySingle<int>(query, new { startDate });
+                return result;
+            }
+        }
 
     }
 }

@@ -72,6 +72,43 @@ namespace Utils.Statistics
 
         }
 
+        public static void RunCandleStreamAllMasCrossOverAgentTests()
+        {
+
+            var grans = Enum.GetValues(typeof(CandleGranularity)).Cast<CandleGranularity>().Select(x => ((int)x) / 60).ToList();
+            var range = Enumerable.Range(1, 256).Where(x => x == 1 || x % 5 == 0).ToList();
+            var mas = range.SelectMany(i => grans.Select(gran => gran * i)).Distinct().ToList();
+            var maxMa = mas.Max();
+            var candleStream = new CandleDbReader(ProductType.LtcUsd, CandleGranularity.Minutes1);
+            var mtf = new MultiTimeFrameSma<decimal>(mas);
+            var crossOver = new MultiTimeFrameCrossOver<decimal>(mtf);
+            var agents = mtf.SimpleMovingAverageIndexes.SelectMany(kvp =>
+            {
+                var s = mtf.SimpleMovingAverageIndexes.Select(other =>
+                {
+                    return new CrossOverAgent<decimal>(mtf.SimpleMovingAverageIndexes[kvp.Key], mtf.SimpleMovingAverageIndexes[other.Key], crossOver);
+                });
+                return s.ToArray();
+            }).ToList();
+
+            var enumerator = candleStream.GetEnumerator();
+            while (mtf.TotalSamples < maxMa && enumerator.MoveNext())
+            {
+                crossOver.AddSample(enumerator.Current.Close.Value);
+                //agents.ForEach(agent => agent.Sample());
+                if ((mtf.TotalSamples & 511) == 0)
+                {
+                    int intitialized = mas.Where(x => x <= mtf.TotalSamples).Count();
+                    int completed = mas.Where(x => x <= mtf.TotalSamples).Sum();
+                    int remaining = mas.Where(x => x > mtf.TotalSamples).Sum() - ((mas.Count - intitialized) * mtf.TotalSamples);
+                    Console.WriteLine($"[{DateTime.Now}] {mtf.TotalSamples} - Initialized {intitialized} of {mas.Count} - Completed: {completed.ToString("N0")} - Remaining: {remaining.ToString("N0")}");
+                }
+
+            }
+            var matrix = crossOver.GetMatrix();
+
+        }
+
 
         public static void RunCandleStreamCrossOverTests()
         {
@@ -338,7 +375,7 @@ namespace Utils.Statistics
         TNumeric Divide(TNumeric dividend, TNumeric divisor);
         TNumeric Multiply(TNumeric multiplicand, TNumeric multiplier);
         TNumeric Add(TNumeric operandA, TNumeric operandB);
-        TNumeric Substract(TNumeric operandA, TNumeric operandB);
+        TNumeric Subtract(TNumeric operandA, TNumeric operandB);
 
         bool IsLessThan(TNumeric operandA, TNumeric operandB);
         bool IsLessThanOrEqual(TNumeric operandA, TNumeric operandB);
@@ -371,7 +408,7 @@ namespace Utils.Statistics
         public abstract TNumeric Divide(TNumeric dividend, TNumeric divisor);
         public abstract TNumeric Multiply(TNumeric multiplicand, TNumeric multiplier);
         public abstract TNumeric Add(TNumeric operandA, TNumeric operandB);
-        public abstract TNumeric Substract(TNumeric operandA, TNumeric operandB);
+        public abstract TNumeric Subtract(TNumeric operandA, TNumeric operandB);
 
 
 
@@ -445,7 +482,7 @@ namespace Utils.Statistics
         public override decimal Multiply(decimal multiplicand, decimal multiplier)
             => multiplicand * multiplier;
 
-        public override decimal Substract(decimal a, decimal b)
+        public override decimal Subtract(decimal a, decimal b)
            => a - b;
     }
     public class FloatOperationsProvider : OperationsProviderBase<float>
@@ -460,7 +497,7 @@ namespace Utils.Statistics
         public override float Multiply(float multiplicand, float multiplier)
             => multiplicand * multiplier;
 
-        public override float Substract(float a, float b)
+        public override float Subtract(float a, float b)
            => a - b;
     }
 
@@ -476,7 +513,7 @@ namespace Utils.Statistics
         public override double Multiply(double multiplicand, double multiplier)
             => multiplicand * multiplier;
 
-        public override double Substract(double a, double b)
+        public override double Subtract(double a, double b)
            => a - b;
     }
 
@@ -486,15 +523,16 @@ namespace Utils.Statistics
         void AddSample(TNumeric sample);
         void AddSample(IConvertible sample);
         TNumeric Average { get; }
-        List<TNumeric> History { get; }
+        TNumeric[] History { get; }
     }
 
     public class SmaBase<T> : ISma<T>
         where T : IConvertible
     {
         public int Count { get; private set; }
-
-        public List<T> History { get; private set; }
+        private int maxLen;
+        //public List<T> History { get; private set; }
+        public T[] History { get; private set; }
         public T Average { get; private set; } = default(T);
         public INumericOperationsProvider<T> OperationsProvider { get; private set; }
         public T SampleRatio { get; private set; }
@@ -503,7 +541,9 @@ namespace Utils.Statistics
             if (operationsProvider == null)
                 operationsProvider = OperationsProviderFactory.GetProvider<T>();
             this.Count = count;
-            this.History = new List<T>();
+            this.maxLen = Count - 1;
+            //this.History = new List<T>();
+            History = new T[count];
             this.OperationsProvider = operationsProvider;
             SampleRatio = OperationsProvider.Divide(OperationsProvider.ToNumeric(1), OperationsProvider.ToNumeric(count));
         }
@@ -512,13 +552,21 @@ namespace Utils.Statistics
         {
             T sampleValue = OperationsProvider.Multiply(SampleRatio, sample);
 
-            History.Add(sampleValue);
-            Average = OperationsProvider.Add(Average, sampleValue);
-            if (History.Count > Count)
+            //History.Add(sampleValue);
+            if (maxLen==0)
             {
-                Average = OperationsProvider.Substract(Average, History[0]);
-                History.RemoveAt(0);
+                History[0] = sample;
+                Average = sample;
             }
+            else
+            {
+                var remValue = OperationsProvider.Multiply(SampleRatio, History[0]);
+                Average = OperationsProvider.Subtract(Average, remValue);
+                Average = OperationsProvider.Add(Average, sampleValue);
+                Array.Copy(History, 1, History, 0, Count - 1);
+                History[maxLen]= sample;
+            }
+
 
         }
 
@@ -547,8 +595,10 @@ namespace Utils.Statistics
         public int TotalSamples = 0;
         public TNumeric LastSample;
 
-        public List<TNumeric> History { get; private set; }
+        //public List<TNumeric> History { get; private set; }
+        public TNumeric[] History { get; private set; }
         public int MaxSampleLength { get; private set; }
+        private int maxLen;
         public MultiTimeFrameSma(int maximumMovingAverage) : this(Enumerable.Range(1, maximumMovingAverage))
         {
 
@@ -559,8 +609,10 @@ namespace Utils.Statistics
             SimpleMovingAverages = new Dictionary<int, SmaBase<TNumeric>>();
             SimpleMovingAverageIndexes = new Dictionary<int, int>();
             SimpleMovingAverageKeys = movingAverageSizes.ToArray();
-            History = new List<TNumeric>();
+
             MaxSampleLength = SimpleMovingAverageKeys.Max(x => x);
+            maxLen = MaxSampleLength - 1;
+            History = new TNumeric[MaxSampleLength];//new List<TNumeric>();
             this.SampleActions = new List<Action<TNumeric>>();
             var averages = new List<TNumeric>();
             int i = 0;
@@ -576,9 +628,18 @@ namespace Utils.Statistics
         }
         public void AddSample(TNumeric value)
         {
-            History.Add(value);
-            if (History.Count > MaxSampleLength)
-                History.RemoveAt(0);
+            //History.Add(value);
+            //if (History.Count > MaxSampleLength)
+            //    History.RemoveAt(0);
+            if (maxLen > 0)
+            {
+                Array.Copy(History, 1, History, 0, maxLen);
+                History[maxLen] = value;
+            }
+            else
+            {
+                History[0] = value;
+            }
             LastSample = value;
             SampleActions.ForEach(action => action(value));
             TotalSamples++;
@@ -590,7 +651,7 @@ namespace Utils.Statistics
         where TNumeric : IConvertible
     {
         public MultiTimeFrameSma<TNumeric> SimpleMovingAverages { get; }
-        public List<TNumeric> History => SimpleMovingAverages.History;
+        public TNumeric[] History => SimpleMovingAverages.History;
         public TNumeric[] Averages => SimpleMovingAverages.Averages;
         public int TotalSamples => SimpleMovingAverages.TotalSamples;
         public TNumeric LastSample => SimpleMovingAverages.LastSample;

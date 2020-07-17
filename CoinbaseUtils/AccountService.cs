@@ -34,7 +34,7 @@ namespace CoinbaseUtils
         {
             CacheExpiration = TimeSpan.FromMinutes(15);
             RefreshCache();
-          
+
         }
         static void RefreshCache()
         {
@@ -50,14 +50,18 @@ namespace CoinbaseUtils
             var fees = svc.client.FeesService.GetCurrentFeesAsync().Result.First();
             CachedMakerFeeRate = fees.MakerFeeRate;
             CachedTakerFeeRate = fees.TakerFeeRate;
-            AllAccountsCache = svc.client.
-                AccountsService.GetAllAccountsAsync().Result
-                .ToDictionary(x => x.Currency, x => x);
+            var allAccounts = svc.client.
+                AccountsService.GetAllAccountsAsync().Result;
+            var accountGroups = allAccounts.GroupBy(x => x.Currency);
+            var dups = accountGroups.Where(x => x.Count() > 1).ToList();
+
+            AllAccountsCache = accountGroups
+                .ToDictionary(x => x.First().Currency, x => x.First());
             Instance = new AccountService();
             CacheDate = DateTime.UtcNow;
 
         }
-  
+
 
         #endregion
 
@@ -69,10 +73,10 @@ namespace CoinbaseUtils
 
 
 
-        public AccountService()
+        public AccountService(bool forceRefresh = false)
         {
             var now = DateTime.UtcNow;
-            if (now.Subtract(CacheDate)> CacheExpiration)
+            if (forceRefresh || now.Subtract(CacheDate) > CacheExpiration)
             {
                 RefreshCache();
             }
@@ -84,7 +88,7 @@ namespace CoinbaseUtils
 
         public decimal GetBalance(Currency currency)
         {
-            Account account = Instance.AllAccounts[currency] = (new CoinbaseService().client.AccountsService.GetAccountByIdAsync(Instance.AllAccounts[currency].Id.ToString())).Result;  
+            Account account = Instance.AllAccounts[currency] = (new CoinbaseService().client.AccountsService.GetAccountByIdAsync(Instance.AllAccounts[currency].Id.ToString())).Result;
             return account.Available;
         }
         public decimal GetBalance(ProductType productType, OrderSide orderSide)
