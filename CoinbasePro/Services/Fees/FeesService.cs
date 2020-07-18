@@ -16,11 +16,11 @@ namespace CoinbasePro.Services.Fees
         {
         }
 
-        public async Task<IEnumerable<Fee>> GetCurrentFeesAsync()
+        public async Task<Fee> GetCurrentFeesAsync()
         {
-            var fee = await SendServiceCall<Fee>(HttpMethod.Get, "/fees");
+            var fees = await SendServiceCall<Fee>(HttpMethod.Get, "/fees");
 
-            return new[] { fee };
+            return fees;
         }
     }
 }
