@@ -413,6 +413,8 @@ namespace CoinbaseConsole
             }
             else
             {
+                //Stop the current swing (to remove event handlers)
+                StopSwing(ProductType, SwingOptions[this.ProductType]);
                 SwingOptions[this.ProductType] = orderOptions;
             }
             orderOptions.MatchHandler = UserFeed_OnMatchReceived;
@@ -428,7 +430,7 @@ namespace CoinbaseConsole
         }
 
 
-
+        private ConcurrentDictionary<string, Task> MatchCache = new ConcurrentDictionary<string, Task>();
         private void UserFeed_OnDoneReceived(object sender, WebfeedEventArgs<Done> e)
         {
             var order = e.LastOrder;
@@ -513,6 +515,24 @@ namespace CoinbaseConsole
         {
 
             var feedOrder = e.LastOrder;
+            var orderKey = $"[{feedOrder.TakerOrderId}] [{feedOrder.MakerOrderId}]";
+            if (MatchCache.ContainsKey(orderKey))
+            {
+                string message = $"Match for orderKey was already handled: {feedOrder.ToJson()}";
+                Log.Information(message);
+                return;
+            }
+            else
+            {
+                MatchCache[orderKey] = Task.Run(() =>
+               {
+                   Thread.Sleep(10000);
+                   MatchCache.TryRemove(orderKey, out Task removed);
+               });
+
+            }
+
+
             var myOrder = OrderManager.TryGetByFirstIds(feedOrder.TakerOrderId, feedOrder.MakerOrderId);
             if (myOrder == null)
             {
@@ -523,12 +543,18 @@ namespace CoinbaseConsole
             }
 
             Log.Information($"[{myOrder.Id}] Handling UserFeed_OnMatchReceived");
-            bool filled = myOrder.FilledSize == myOrder.Size;
+            bool filled = feedOrder.Size == (myOrder.Size - myOrder.FilledSize) || myOrder.FilledSize == myOrder.Size;
+            //guard against multiple events.
             if (filled)
             {
                 Log.Information($"[{myOrder.Id}] Removing filled order from {nameof(OrderManager)}.{nameof(OrderManager.AllOrders)}");
                 bool removed = OrderManager.AllOrders.TryRemove(myOrder.Id, out OrderResponse removedOrder);
                 Log.Information($"[{myOrder.Id}] Removal result: {removed}");
+            }
+            else
+            {
+                myOrder.FilledSize += feedOrder.Size;
+
             }
             feedOrder.Side = myOrder.Side;
             Log.Information($"[{myOrder.Id}] Adding match to {nameof(MatchQueue)}");
@@ -537,9 +563,11 @@ namespace CoinbaseConsole
 
             var side = feedOrder.Side;
             var productType = feedOrder.ProductId;
-            var options = SwingOptions[productType];
+            SwingOrderOptions options = SwingOptions.ContainsKey(productType) ? SwingOptions[productType] : null;
+            if (options == null)
+                return;
             var product = OrderService.GetProduct(ProductType);
-            var increment = product.QuoteIncrement * 10;
+            var increment = product.QuoteIncrement;// * 10;
 
             if (side == OrderSide.Buy)
             {
@@ -547,6 +575,7 @@ namespace CoinbaseConsole
                 if (queuedTotal >= 10m)
                 {
                     var aggregate = MatchQueue.MatchedBuys.Aggregate();
+
                     var size = aggregate.Size;
                     var newOrder = OrderHelper.CreatePostOnlyOrder(productType, OrderSide.Sell, options.SellPrice, size);
                     if (filled)
@@ -572,17 +601,29 @@ namespace CoinbaseConsole
                     var aggregate = MatchQueue.MatchedSells.Aggregate();
                     var total = aggregate.Total;
                     var svc = new AccountService();
-                    var fee = svc.MakerFeeRate;
+                    var feeRate = svc.MakerFeeRate;
+                    var fee = total * feeRate;
                     var totalRemaining = (total - fee);
-                    var amountRemaining = totalRemaining.ToPrecision(increment);
+                    var amountRemaining = totalRemaining;//.ToPrecision(product.QuoteIncrement);
+                    var nextFee = amountRemaining * feeRate;
+                    amountRemaining -= nextFee;
 
+                    var preciseAmountRemaining = amountRemaining.ToPrecision(product.QuoteIncrement);
 
                     var price = options.BuyPrice;
-                    var newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, amountRemaining);
-                    while (newOrder.TotalAmount > amountRemaining)
+                    var newOrderSize = amountRemaining.ToPrecision(product.QuoteIncrement) / price;
+
+
+                    newOrderSize = newOrderSize.ToPrecision(product.BaseIncrement);
+                    var newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, newOrderSize);
+
+                    while (newOrder.TotalAmount > totalRemaining)
                     {
-                        amountRemaining -= increment;
-                        newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, amountRemaining);
+                        //amountRemaining -= increment;
+                        //newOrderSize = (amountRemaining / price).ToPrecision(product.BaseIncrement);
+                        newOrderSize -= product.BaseIncrement;
+                        newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, newOrderSize);
+
                     }
                     if (filled)
                     {
@@ -591,7 +632,7 @@ namespace CoinbaseConsole
                     }
 
                     Log.Information($"[{myOrder.Id}] {nameof(OrderService)}.{nameof(OrderService.PlaceLimitBuyOrder)}({newOrder.ToJson()})");
-                    OrderService.PlaceLimitBuyOrder(newOrder);
+                    var result = OrderService.PlaceLimitBuyOrder(newOrder);
                 }
                 else
                 {
@@ -620,11 +661,17 @@ namespace CoinbaseConsole
                 this.userFeed.OnMatchReceived -= options.MatchHandler;
                 options.MatchHandler = null;
             }
+
+            if (options.DoneHandler != null)
+            {
+                this.userFeed.OnDoneReceived -= options.DoneHandler;
+                options.DoneHandler = null;
+            }
             if (SwingOptions.ContainsKey(productType))
             {
                 SwingOptions.Remove(productType);
             }
-            Console.WriteLine($" {tabbracket}Stop Swing: {options.BuyPrice}-{options.BuyPrice}");
+            Console.WriteLine($" {tabbracket}Stop Swing: {options.BuyPrice}-{options.SellPrice}");
         }
 
         private IEnumerable<Action> ParseFillsOptions(ArgumentList arguments)
@@ -634,13 +681,18 @@ namespace CoinbaseConsole
             {
                 var svc = new CoinbaseService();
                 var fillsLists = svc.client.FillsService.GetFillsByProductIdAsync(ProductType, 20, 1).Result;
+                var product = OrderService.GetProduct(ProductType);
                 var fills = fillsLists.SelectMany(x => x).ToList();
                 result.AddRange(
                     fills.Select(fill =>
                     {
                         return (Action)(() =>
                         {
-                            Console.WriteLine($"{fill.CreatedAt.ToLocalTime()} {fill.Side} {fill.Size} @ {fill.Price.ToString("c")} ({fill.Fee.ToString("c")}) = {(fill.Size * fill.Price).ToString("c")}");
+                            var size = fill.Size.ToPrecision(product.BaseIncrement);
+                            var price = fill.Price.ToPrecision(product.QuoteIncrement);
+                            var fee = fill.Fee.ToPrecision(0.00000001m);
+                            var net = (fill.Size * fill.Price).ToPrecision(product.QuoteIncrement);
+                            Console.WriteLine($"{fill.CreatedAt.ToLocalTime()} {fill.Side} {size} @ ${price} (${fee}) = ${net}");
                         });
                     })
                  );
@@ -693,7 +745,9 @@ namespace CoinbaseConsole
 
             if (result.Count == 0)
             {
-
+                var svc = new AccountService();
+                var orderTotal = svc.GetBalance(ProductType.LtcUsd, OrderSide.Buy);
+                var totalValue = orderTotal;
                 result.Add(() => Console.WriteLine($"[{DateTime.Now}] {OrderManager.AllOrders.Count} Orders:"));
                 if (addBuys)
                 {
@@ -701,11 +755,19 @@ namespace CoinbaseConsole
                     if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
                     var totalSize = orders.Sum(x => x.Size) - orders.Sum(x => x.FilledSize);
                     var totalAmount = orders.Sum(x => (x.Size - x.FilledSize) * x.Price);
+                    orderTotal += totalAmount;
+                    totalValue += totalAmount;
                     result.Add(() => Console.WriteLine($"Buys {orders.Count} ({totalSize} {ProductType} {totalAmount.ToCurrency()})"));
                     result.AddRange(Enumerable.Range(0, orders.Count).Select(i =>
                         {
                             var x = orders[i];
-                            return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {x.Size - x.FilledSize} @ {x.Price.ToCurrency(x.ProductId)} = {((x.Size - x.FilledSize) * x.Price).ToCurrency(x.ProductId)}"));
+                            var product = OrderService.GetProduct(x.ProductId);
+                            var size = x.Size.ToPrecision(product.BaseIncrement);
+                            var price = x.Price.ToPrecision(product.QuoteIncrement);
+                            var fee = x.FillFees.ToPrecision(0.00000001m);
+                            var remainingSize = x.Size - x.FilledSize;
+                            var net = (remainingSize * x.Price).ToPrecision(product.QuoteIncrement);
+                            return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {remainingSize.ToPrecision(product.BaseIncrement)} @ ${price} = ${net}"));
                         }
                     ));
                     if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
@@ -713,19 +775,51 @@ namespace CoinbaseConsole
                 }
                 if (addSells)
                 {
-                    var orders = OrderManager.SellOrders.Values.OrderBy(x => x.Price).ThenBy(x => x.Price * x.Size).ToList();
-                    if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
-                    var totalSize = orders.Sum(x => x.Size) - orders.Sum(x => x.FilledSize);
-                    var totalAmount = orders.Sum(x => (x.Size - x.FilledSize) * x.Price);
-                    result.Add(() => Console.WriteLine($"Sells {orders.Count} ({totalSize} {ProductType} {totalAmount.ToCurrency(Currency.USD)})"));
-                    result.AddRange(Enumerable.Range(0, orders.Count).Select(i =>
+
+                    if (OrderManager.SellOrders.Count > 0)
                     {
-                        var x = orders[i];
-                        return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {x.Size - x.FilledSize} @ {x.Price.ToCurrency(x.ProductId)} = {((x.Size - x.FilledSize) * x.Price).ToCurrency(x.ProductId)}"));
+                        var orders = OrderManager.SellOrders.Values.OrderBy(x => x.ProductId.ToString()).ThenBy(x => x.Price).ThenBy(x => x.Price * x.Size).ToList();
+                        //var ticker = Client.Instance.ProductsService.GetProductTickerAsync().Result.
+                        var sellGroups = OrderManager.SellOrders.ToLookup(x => x.Value.ProductId);
+                       
+                        var groupLines = sellGroups
+                            .Select(x =>
+                            {
+                                var ticker = Client.Instance.ProductsService.GetProductTickerAsync(x.Key).Result;
+                                var totalSize = x.Sum(y => y.Value.Size);
+                                var filledSize = x.Sum(y => y.Value.FilledSize);
+                                var coinValue = ((totalSize - filledSize) * ticker.Price);
+                                totalValue += coinValue;
+                                //.ToPrecision(0.01m).ToString("C");
+                                var coinsRemaining = (x.Sum(y => y.Value.Size) - x.Sum(y => y.Value.FilledSize));
+                                return $" {x.Key} {ticker.Price} ({x.Count()} Sells) ({(x.Sum(y => y.Value.Size) - x.Sum(y => y.Value.FilledSize)).ToPrecision(OrderService.GetProduct(x.Key).BaseIncrement)} ${x.Sum(y => (y.Value.Size - y.Value.FilledSize) * y.Value.Price).ToCurrency(Currency.USD)}) ({coinValue}))";
+                            })
+                            .ToList();
+
+                        var totalAmount = sellGroups.Sum(x => x.Sum(y => (y.Value.Size - y.Value.FilledSize) * y.Value.Price));
+                        orderTotal += totalAmount;
+                        if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
+                        result.Add(() => Console.WriteLine($"Sells {orders.Count} (${totalAmount.ToCurrency(Currency.USD)})"));
+                        result.AddRange(groupLines.Select(x => (Action)(() => Console.WriteLine(x))));
+
+                        result.AddRange(Enumerable.Range(0, orders.Count).Select(i =>
+                        {
+                            var x = orders[i];
+                            var product = OrderService.GetProduct(x.ProductId);
+                            var size = x.Size.ToPrecision(product.BaseIncrement);
+                            var price = x.Price.ToPrecision(product.QuoteIncrement);
+                            var fee = x.FillFees.ToPrecision(0.00000001m);
+
+                            var remainingSize = x.Size - x.FilledSize;
+                            var net = (remainingSize * x.Price).ToPrecision(product.QuoteIncrement);
+                            return (Action)(() => Console.WriteLine($" [{i}] {x.ProductId} {x.Side} {remainingSize.ToPrecision(product.BaseIncrement)} @ ${price} = ${net}"));
+                        }
+                        ));
+                        if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
                     }
-                    ));
-                    if (orders.Count > 0) { result.Add(() => Console.WriteLine()); }
+
                 }
+                result.Insert(0, ()=> Console.WriteLine($"Total: {orderTotal.ToString("C")} ({totalValue.ToString("C")})"));
             }
             return result;
         }
@@ -767,7 +861,7 @@ namespace CoinbaseConsole
             }
             return result;
         }
-        public static IEnumerable<Action> ParseSpreadOptions(ArgumentList arguments)
+        public IEnumerable<Action> ParseSpreadOptions(ArgumentList arguments)
         {
             var result = new List<Action>();
 
@@ -800,7 +894,7 @@ namespace CoinbaseConsole
                 }
                 else
                 {
-                    productType = options.ProductType = DefaultProductType;
+                    productType = options.ProductType = ProductType;
                 }
 
                 if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal startPrice))
@@ -1007,7 +1101,7 @@ namespace CoinbaseConsole
             while (amountRemaining > 0)
             {
                 var order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, OrderSize);
-                amountRemaining -=  order.TotalAmount;
+                amountRemaining -= (OrderSide == OrderSide.Buy) ? order.TotalAmount : OrderSize;
                 if (amountRemaining >= 0m && order.IsValid())
                 {
                     actions.Add(() =>
@@ -1046,9 +1140,9 @@ namespace CoinbaseConsole
                             Console.WriteLine($"{DateTime.Now}: Placed order {order}");
                             System.Threading.Thread.Sleep(100);
                         });
-                        break;
-                    }
 
+                    }
+                    break;
                 }
                 currentPrice += (OrderSide == OrderSide.Buy) ? (-Increment) : Increment;
             }
@@ -1235,9 +1329,28 @@ namespace CoinbaseConsole
         public static IEnumerable<Guid> CancelAllOrders(Func<OrderResponse, bool> filter)
         {
             Log.Information($"Called {nameof(OrderService)}.{nameof(CancelAllOrders)}(Func<OrderResponse, bool> filter)");
+            //OrderManager.Refresh();
             var orders = GetAllOrders();
             var cancellations = orders.Where(filter).ToList();
-            return CancelOrders(cancellations.Select(x => x.Id));
+
+
+            var cancelOrderIds = cancellations.Select(x => x.Id).ToList();
+            var cancelledIds = CancelOrders(cancelOrderIds).ToList();
+            var result = cancelledIds.Where(x => x != Guid.Empty).ToList();
+
+            cancelOrderIds = cancelOrderIds.Where(x => !result.Contains(x)).ToList();
+
+            while (cancelOrderIds.Count > 0)
+            {
+                cancelledIds = CancelOrders(cancelOrderIds).ToList();
+                result.AddRange(cancelledIds.Where(x => x != Guid.Empty));
+                cancelOrderIds = cancelOrderIds.Where(x => !result.Contains(x)).ToList();
+            }
+
+
+
+
+            return result;
         }
 
         public static IEnumerable<Guid> CancelAllSells()
@@ -1285,7 +1398,7 @@ namespace CoinbaseConsole
                         .ToDictionary(x => x.Id, x => x);
                     Log.Information($"Retrieved {Products.Count} products: {string.Join(", ", Products.Keys)}");
                 }
-            
+
             }
             return Products[productType];
         }
@@ -1391,10 +1504,17 @@ namespace CoinbaseConsole
         public static List<OrderResponse> GetAllOrders()
         {
             Log.Information($"Called {nameof(OrderService)}.{nameof(GetAllOrders)}");
-            var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync().Result);
-            var result = apiResult.SelectMany(lst => lst.Select(x => x)).ToList();
-            Log.Information($"Retrieved orders {string.Join(", ", result.Select(x => x.Id))}");
-            return result;
+            var statusList = new[] { OrderStatus.Active, OrderStatus.Open, OrderStatus.Pending, };
+            var orders = OrderService.GetAllOrders(statusList);
+            //var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync().Result);
+            //if (apiResult == null)
+            //{
+            //    Console.WriteLine("Failed to retrieve orders");
+            //    return orders;
+            //}
+            //var result = apiResult.SelectMany(lst => lst.Select(x => x)).ToList();
+            //Log.Information($"Retrieved orders {string.Join(", ", result.Select(x => x.Id))}");
+            return orders;
         }
 
         public static List<OrderResponse> GetAllOrders(OrderStatus[] statusList)
@@ -1433,21 +1553,35 @@ namespace CoinbaseConsole
         public static OrderResponse PlaceLimitSellOrder(TradeOrder order)
         {
             Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceLimitSellOrder)}: {order.ToJson()}");
+            int tryCount = 0;
+            int maxRetries = 3;
+            retryPlaceLimitSellOrder:
             var result = TryExecute(() =>
-                  service.client.OrdersService
-                  .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
-                  clientOid: order.ClientId).Result);
+                 service.client.OrdersService
+                 .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
+                 clientOid: order.ClientId).Result);
 
             if (result is null)
             {
-                string error = $"Failed to place limit sell order: {order}";
+                string error = $"Failed to place limit {order.OrderSide} order: {order}";
                 Log.Error(error);
                 Console.WriteLine(error);
+                if (tryCount++ < maxRetries)
+                {
+                    System.Threading.Thread.Sleep(1000);
+                    goto retryPlaceLimitSellOrder;
+                }
+                else
+                {
+                    error = "Retry limit exceeded: " + error;
+                    Log.Error(error);
+                    Console.WriteLine(error);
+                }
                 //throw new Exception(error);
             }
             else
             {
-                Log.Information($"[{result.Id}] Placed limit sell order: {result.ToJson()}");
+                Log.Information($"[{result.Id}] Placed limit {order.OrderSide} order: {result.ToJson()}");
             }
             return result;
 
@@ -1456,6 +1590,9 @@ namespace CoinbaseConsole
         public static OrderResponse PlaceLimitBuyOrder(TradeOrder order)
         {
             Log.Information($"Called {nameof(OrderService)}.{nameof(PlaceLimitBuyOrder)}: {order.ToJson()}");
+            int tryCount = 0;
+            int maxRetries = 3;
+            retryPlaceLimitBuyOrder:
             var result = TryExecute(() =>
                 service.client.OrdersService
                 .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
@@ -1463,14 +1600,19 @@ namespace CoinbaseConsole
 
             if (result is null)
             {
-                string error = $"Failed to place limit sell order: {order}";
+                string error = $"Failed to place limit {order.OrderSide} order: {order}";
                 Log.Error(error);
-                Console.Write(error);
+                Console.WriteLine(error);
+                if (tryCount++ < maxRetries)
+                {
+                    System.Threading.Thread.Sleep(1000);
+                    goto retryPlaceLimitBuyOrder;
+                }
                 //throw new Exception(error);
             }
             else
             {
-                Log.Information($"[{result.Id}] Placed limit buy order: {result.ToJson()}");
+                Log.Information($"[{result.Id}] Placed limit {order.OrderSide} order: {result.ToJson()}");
             }
             return result;
         }

@@ -56,10 +56,6 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\CoinbaseConsole\CoinbaseConsole.csproj">
-      <Project>{774FF6BE-3D87-4CD3-A1C3-7BBA629D59A7}</Project>
-      <Name>CoinbaseConsole</Name>
-    </ProjectReference>
     <ProjectReference Include="..\CoinbaseData\CoinbaseData.csproj">
       <Project>{e49c23c6-f5e2-4b81-b441-d7d6700b8835}</Project>
       <Name>CoinbaseData</Name>
@@ -69,7 +65,7 @@
       <Name>CoinbasePro</Name>
     </ProjectReference>
     <ProjectReference Include="..\CoinbaseUtils\CoinbaseUtils.csproj">
-      <Project>{6bc2d2b3-2d03-4d22-a407-a5cb88d013c7}</Project>
+      <Project>{6BC2D2B3-2D03-4D22-A407-A5CB88D013C7}</Project>
       <Name>CoinbaseUtils</Name>
     </ProjectReference>
   </ItemGroup>

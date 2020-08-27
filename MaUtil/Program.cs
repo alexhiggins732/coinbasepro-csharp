@@ -117,11 +117,30 @@ namespace MaUtil
     }
     class Program
     {
+
+        static ProductType SelectedProductType = ProductType.LtcUsd;
         static void Main(string[] args)
         {
             var startDate = DateTime.Parse("1/1/2019");
 
-            TestMaStrategy(CandleGranularity.Hour1, startDate, 625);
+            ProductType productType = ParseProductType();
+
+            SelectedProductType = productType;
+            //Todo: Allow console based selection;
+            TestMaStrategy(CandleGranularity.Hour1, startDate, 625, SelectedProductType);
+        }
+
+        private static ProductType ParseProductType()
+        {
+            bool parsed = false;
+            ProductType productType = ProductType.Unknown;
+            while (!parsed)
+            {
+                Console.WriteLine("Enter a valid product type");
+                string val = Console.ReadLine();
+                parsed = val.ParseEnum<ProductType>(out productType);
+            }
+            return productType;
         }
 
         static void TestMa15()

@@ -183,6 +183,7 @@ namespace CoinbaseData
 
         public static DateTime GetMinDbCandleDate(ProductType productType, CandleGranularity granularity)
         {
+            AssureCandlesTables(productType);
             var tableName = $"{productType}{granularity}";
             var query = $"select min([time]) from {tableName}";
             using (var conn = new SqlConnection(TableHelper.ConnectionString))

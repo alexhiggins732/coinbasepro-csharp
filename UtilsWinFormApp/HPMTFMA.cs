@@ -80,7 +80,7 @@ namespace UtilsWinFormApp
         {
             var names = Enum.GetValues(typeof(T)).ToList<T>();
             comboBox.Items.Clear();
-            names.ForEach(x => comboBox.Items.Add(x));
+            names.OrderBy(x=> x.ToString()).ToList().ForEach(x => comboBox.Items.Add(x));
             comboBox.SelectedIndex = 0;
 
             for (var i = 0; i < comboBox.Items.Count; i++)

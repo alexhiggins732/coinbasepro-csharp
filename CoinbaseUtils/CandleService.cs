@@ -13,13 +13,19 @@ namespace CoinbaseUtils
     public class CandleService : CoinbaseService
     {
 
-      
+
         public List<Candle> GetCandles(ProductType productPair,
            DateTime start,
            DateTime end,
            CandleGranularity granularity,
            bool useLocalTime = true)
         {
+            if (start.Year < 2010)
+            {
+                var diff = end - start;
+                start = Candles.GetMinCandleDateFromApi(productPair);
+                end = start + diff;
+            }
             if (useLocalTime)
             {
 
@@ -240,13 +246,14 @@ namespace CoinbaseUtils
                             CurrentCandle.Open = CurrentCandle.High = CurrentCandle.Low = CurrentCandle.Close;
                             CurrentCandle.Volume = 0;
                         }
-                    } else
+                    }
+                    else
                     {
 
                     }
                 }
             }
-            if(!result)
+            if (!result)
                 CurrentCandle = null;
             return result;
         }

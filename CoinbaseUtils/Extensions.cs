@@ -164,7 +164,9 @@ namespace CoinbaseUtils
                     precision = 8;
                     break;
                 default:
-                    throw new NotImplementedException("ToCurrency({productType})");
+                    precision = 8;
+                    //throw new NotImplementedException("ToCurrency({productType})");
+                    break;
             }
             return Math.Round(value, precision).ToString();
         }
@@ -182,6 +184,8 @@ namespace CoinbaseUtils
         }
         public static string ToDebugString(this CoinbasePro.Services.Orders.Models.Responses.OrderResponse x)
         {
+            if (x == null)
+                return "Invalid order resposne;";
             return $"{x.Id}: {x.Size} @ {x.Price.ToCurrency(x.ProductId)} ({x.FillFees.ToCurrency(x.ProductId)}) = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
         }
         public static string ToDebugString(this Open x)
