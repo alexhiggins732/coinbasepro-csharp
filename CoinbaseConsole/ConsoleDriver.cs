@@ -391,6 +391,17 @@ namespace CoinbaseConsole
                     }
 
                 }
+                else if (arguments.Length == 2 && arguments.arg1 == "list")
+                {
+                    result.Add(() => Console.WriteLine($"Found {SwingOptions.Count} Swing Entries"));
+                    int i =1;
+                    foreach (var kvp in SwingOptions)
+                    {
+                        SwingOrderOptions opt = kvp.Value;
+                        result.Add(() => Console.WriteLine($"\t{i++} {kvp.Key}:  {opt}"));
+                    }
+                }
+
                 else
                 {
                     result.Add(arguments
@@ -1080,6 +1091,11 @@ namespace CoinbaseConsole
         {
             this.BuyPrice = buyPrice;
             this.SellPrice = sellPrice;
+        }
+
+        public override string ToString()
+        {
+            return $"{BuyPrice} - {SellPrice}";
         }
     }
     public class SpreadOptions
