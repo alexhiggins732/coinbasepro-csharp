@@ -14,6 +14,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.AccessControl;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -33,11 +34,13 @@ namespace CoinbaseConsole
         public ProductType ProductType { get; private set; }
         public ConsoleDriver() : this(DriverDefaultProductType) { }
 
+        public OrderSyncer OrderSyncer;
         public ConsoleDriver(ProductType productType)
         {
             SetProductType(productType);
             log = new StreamWriter("ConsoleDriver.log", true);
             log.AutoFlush = true;
+            OrderSyncer = new OrderSyncer(this);
         }
 
         public Func<Ticker, String> FormatTicker => (ticker) =>
@@ -53,6 +56,47 @@ namespace CoinbaseConsole
             Console.WriteLine($"{tabbracket}Set Product: {productType}");
             SetTicker(productType);
         }
+
+        private Ticker LastTicker = null;
+        private List<ProductType> ProductSubscriptions = null;
+        void SetTicker(ProductType productType)
+        {
+            this.ProductType = productType;
+            if (ticker != null)
+            {
+                ticker.OnTickerReceived -= Ticker_OnTickerReceived;
+                ticker.Stop();
+                ticker = null;
+            }
+
+            ticker = CoinbaseTicker.Create(productType);
+            ticker.OnTickerReceived += Ticker_OnTickerReceived;
+
+            ProductSubscriptions = ProductSubscriptions ?? new List<ProductType>();
+
+            if (!ProductSubscriptions.Contains(productType))
+            {
+                SetProductFeeds(ProductSubscriptions.Concat(new[] { productType }).ToList());
+            }
+
+        }
+
+        internal void SetProductFeeds(IEnumerable<ProductType> productTypes)
+        {
+            ProductSubscriptions = ProductSubscriptions ?? new List<ProductType>();
+            if (!ProductSubscriptions.OrderBy(x => x).SequenceEqual(productTypes.OrderBy(x => x)))
+            {
+                lock (ProductSubscriptions)
+                {
+                    ProductSubscriptions.Clear();
+                    ProductSubscriptions.AddRange(productTypes);
+                }
+                this.userFeed?.Stop();
+                this.userFeed?.Start(ProductSubscriptions, (new[] { ChannelType.User }).ToList());
+            }
+
+        }
+
         public void Run()
         {
 
@@ -68,7 +112,12 @@ namespace CoinbaseConsole
                     lines.ForEach(x =>
                     {
                         Console.WriteLine(x);
-                        ParseArguments(x).Execute();
+                        if (!x.StartsWith("#"))
+                        {
+                            ParseArguments(x).Execute();
+                            System.Threading.Thread.Sleep(500);
+                        }
+
                     });
                 }
             }
@@ -165,30 +214,6 @@ namespace CoinbaseConsole
             this.SocketLogger.LogMessageRecieved(e);
         }
 
-        private Ticker LastTicker = null;
-
-        void SetTicker(ProductType productType)
-        {
-            this.ProductType = productType;
-            if (ticker != null)
-            {
-                ticker.OnTickerReceived -= Ticker_OnTickerReceived;
-                ticker.Stop();
-                ticker = null;
-            }
-
-            ticker = CoinbaseTicker.Create(productType);
-            ticker.OnTickerReceived += Ticker_OnTickerReceived;
-
-
-            this.userFeed?.Stop();
-            this.userFeed?.Start((new[] { productType }).ToList(), (new[] { ChannelType.User }).ToList());
-
-
-        }
-
-
-
         public DriverOptions ParseArguments(string line)
         {
             var result = new DriverOptions();
@@ -252,6 +277,10 @@ namespace CoinbaseConsole
             else if (arg0 == "swing")
             {
                 commandActions.AddRange(ParseSwingOptions(arguments));
+            }
+            else if (arg0 == "feeds")
+            {
+                commandActions.Add((Action)(() => Console.WriteLine($"=> {string.Join(",", ProductSubscriptions)}")));
             }
             else
             {
@@ -351,7 +380,44 @@ namespace CoinbaseConsole
                     result.Add(arguments.InvalidAction(x));
                 };
                 int idx = 1;
-                if (arguments.Length >= 3)
+                if (arguments.Length >= 7)
+                {
+                    var parseTest = DateTime.TryParse(arguments[1], out DateTime startTest);
+                    if (arguments.Length == 8)
+                    {
+                        if (arguments[idx].ParseEnum<ProductType>(out ProductType productType))
+                        {
+                            idx++;
+                            SetProductType(productType);
+                        }
+                        else
+                        {
+                            invalid($"Swing requires 8 arguments when product type is specified.\r\n{tabbracket}{options}");
+                            goto Done;
+                        }
+                    }
+                    if (
+                         DateTime.TryParse(arguments[idx++], out DateTime start)
+                         && DateTime.TryParse(arguments[idx++], out DateTime end)
+                         && decimal.TryParse(arguments[idx++], out decimal startBuyPrice)
+                         && decimal.TryParse(arguments[idx++], out decimal endBuyPrice)
+                         && decimal.TryParse(arguments[idx++], out decimal startSellPrice)
+                         && decimal.TryParse(arguments[idx++], out decimal endSellPrice)
+                         ) // args. length=7  EX: "swing 3/18/2020 8/27/2020 32.37 43.50  54.00 65.75";
+                    {
+                        var swingOrderOptions = new TrendLineOrderOptions(ProductType, start, startBuyPrice, endBuyPrice, end, startSellPrice, endSellPrice);
+
+                        result.Add(() => StartSwing(swingOrderOptions));
+                    }
+                    else
+                    {
+                        invalid($"Invalid swing trend line arguments");
+                        result.Add(() => Console.WriteLine(
+                            "Usage swing [producttype] startDate endDate startBuyPrice endBuyPrice startSellPrice  endSellPrice")
+                        );
+                    }
+                }
+                else if (arguments.Length >= 3)
                 {
                     if (arguments[idx].ParseEnum<ProductType>(out ProductType productType))
                     {
@@ -384,7 +450,16 @@ namespace CoinbaseConsole
                             }
                             else
                             {
-                                result.Add(() => StartSwing(buyPrice, sellPrice));
+                                var swingOrderOptions = new SwingOrderOptions(ProductType, buyPrice, sellPrice);
+                                if (!(swingOrderOptions.BuyPrice < swingOrderOptions.SellPrice))
+                                {
+                                    invalid($"Invalid price range specified.\r\n{tabbracket}{options}");
+                                }
+                                else
+                                {
+                                    result.Add(() => StartSwing(swingOrderOptions));
+                                }
+
                             }
 
                         }
@@ -394,7 +469,7 @@ namespace CoinbaseConsole
                 else if (arguments.Length == 2 && arguments.arg1 == "list")
                 {
                     result.Add(() => Console.WriteLine($"Found {SwingOptions.Count} Swing Entries"));
-                    int i =1;
+                    int i = 1;
                     foreach (var kvp in SwingOptions)
                     {
                         SwingOrderOptions opt = kvp.Value;
@@ -409,15 +484,38 @@ namespace CoinbaseConsole
                            );
                 }
             }
+            Done:
             return result;
         }
 
 
         Dictionary<ProductType, SwingOrderOptions> SwingOptions = new Dictionary<ProductType, SwingOrderOptions>();
 
+        private void StartSwing(SwingOrderOptions orderOptions)
+        {
+            if (!SwingOptions.ContainsKey(this.ProductType))
+            {
+                SwingOptions.Add(this.ProductType, orderOptions);
+            }
+            else
+            {
+                //Stop the current swing (to remove event handlers)
+                StopSwing(ProductType, SwingOptions[this.ProductType]);
+                SwingOptions[this.ProductType] = orderOptions;
+            }
+            orderOptions.MatchHandler = UserFeed_OnMatchReceived;
+            orderOptions.LastMatchHandler = UserFeed_OnLastMatchReceived;
+            orderOptions.DoneHandler = UserFeed_OnDoneReceived;
+
+
+            this.userFeed.OnMatchReceived += orderOptions.MatchHandler;
+            this.userFeed.OnLastMatchReceived += orderOptions.LastMatchHandler;
+            this.userFeed.OnDoneReceived += orderOptions.DoneHandler;
+            Console.WriteLine($"{tabbracket}Swing:{orderOptions.BuyPrice}-{orderOptions.SellPrice}");
+        }
         private void StartSwing(decimal lowPrice, decimal highPrice)
         {
-            var orderOptions = new SwingOrderOptions(lowPrice, highPrice);
+            var orderOptions = new SwingOrderOptions(ProductType, lowPrice, highPrice);
             if (!SwingOptions.ContainsKey(this.ProductType))
             {
                 SwingOptions.Add(this.ProductType, orderOptions);
@@ -577,9 +675,9 @@ namespace CoinbaseConsole
             SwingOrderOptions options = SwingOptions.ContainsKey(productType) ? SwingOptions[productType] : null;
             if (options == null)
                 return;
-            var product = OrderService.GetProduct(ProductType);
-            var increment = product.QuoteIncrement;// * 10;
-
+            var product = OrderService.GetProduct(productType);
+            var increment = product.QuoteIncrement;// buyside currency increment USD for BTCUSD
+            var sellIncement = product.BaseIncrement; //sellside currency incrrement BTC for BTCUSD
             if (side == OrderSide.Buy)
             {
                 var queuedTotal = MatchQueue.MatchedBuys.QueueTotal;
@@ -588,7 +686,8 @@ namespace CoinbaseConsole
                     var aggregate = MatchQueue.MatchedBuys.Aggregate();
 
                     var size = aggregate.Size;
-                    var newOrder = OrderHelper.CreatePostOnlyOrder(productType, OrderSide.Sell, options.SellPrice, size);
+                    var sellPrice = options.SellPrice.ToPrecision(product.BaseIncrement);
+                    var newOrder = OrderHelper.CreatePostOnlyOrder(productType, OrderSide.Sell, sellPrice, size);
                     if (filled)
                     {
                         Log.Information($"[{myOrder.Id}] {nameof(OrderManager)}.{nameof(OrderManager.BuyOrders)}.TryRemove({myOrder.Id}, out)");
@@ -621,19 +720,19 @@ namespace CoinbaseConsole
 
                     var preciseAmountRemaining = amountRemaining.ToPrecision(product.QuoteIncrement);
 
-                    var price = options.BuyPrice;
+                    var price = options.BuyPrice.ToPrecision(product.QuoteIncrement);
                     var newOrderSize = amountRemaining.ToPrecision(product.QuoteIncrement) / price;
 
 
                     newOrderSize = newOrderSize.ToPrecision(product.BaseIncrement);
-                    var newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, newOrderSize);
+                    var newOrder = OrderService.CreatePostOnlyOrder(productType, OrderSide.Buy, price, newOrderSize);
 
                     while (newOrder.TotalAmount > totalRemaining)
                     {
                         //amountRemaining -= increment;
                         //newOrderSize = (amountRemaining / price).ToPrecision(product.BaseIncrement);
                         newOrderSize -= product.BaseIncrement;
-                        newOrder = OrderService.CreatePostOnlyOrder(ProductType, OrderSide.Buy, price, newOrderSize);
+                        newOrder = OrderService.CreatePostOnlyOrder(productType, OrderSide.Buy, price, newOrderSize);
 
                     }
                     if (filled)
@@ -767,7 +866,7 @@ namespace CoinbaseConsole
                     var totalSize = orders.Sum(x => x.Size) - orders.Sum(x => x.FilledSize);
                     var totalAmount = orders.Sum(x => (x.Size - x.FilledSize) * x.Price);
                     orderTotal += totalAmount;
-                    totalValue += totalAmount;
+                    totalValue += totalAmount; //TODO: ProductType is bug
                     result.Add(() => Console.WriteLine($"Buys {orders.Count} ({totalSize} {ProductType} {totalAmount.ToCurrency()})"));
                     result.AddRange(Enumerable.Range(0, orders.Count).Select(i =>
                         {
@@ -792,7 +891,7 @@ namespace CoinbaseConsole
                         var orders = OrderManager.SellOrders.Values.OrderBy(x => x.ProductId.ToString()).ThenBy(x => x.Price).ThenBy(x => x.Price * x.Size).ToList();
                         //var ticker = Client.Instance.ProductsService.GetProductTickerAsync().Result.
                         var sellGroups = OrderManager.SellOrders.ToLookup(x => x.Value.ProductId);
-                       
+
                         var groupLines = sellGroups
                             .Select(x =>
                             {
@@ -830,14 +929,14 @@ namespace CoinbaseConsole
                     }
 
                 }
-                result.Insert(0, ()=> Console.WriteLine($"Total: {orderTotal.ToString("C")} ({totalValue.ToString("C")})"));
+                result.Insert(0, () => Console.WriteLine($"Total: {orderTotal.ToString("C")} ({totalValue.ToString("C")})"));
             }
             return result;
         }
 
         private IEnumerable<Action> ParseBalanceOptions(ArgumentList arguments)
         {
-            List<Action> result = new List<Action>();
+            List<Action> result = new List<Action>();//TODO: Balance for entire portfolio
             result.Add(() =>
             {
                 var svc = new AccountService();
@@ -898,7 +997,8 @@ namespace CoinbaseConsole
                         break;
                 }
 
-                if (idx < arguments.Length && Enum.TryParse<ProductType>(arguments.parts[idx], out ProductType productType))
+                //TODO: Bug - Only parse strings not numbers: eg, 55 gets parsed as ProductType.AlgoGBP
+                if (bool.Parse(bool.FalseString) && idx < arguments.Length && Enum.TryParse<ProductType>(arguments.parts[idx], out ProductType productType))
                 {
                     idx++;
                     options.ProductType = productType;
@@ -949,7 +1049,10 @@ namespace CoinbaseConsole
             if (result.Count == 0)
             {
                 result.AddRange(options.GetOrderActions());
-
+            }
+            else
+            {
+                result.Add(() => Console.WriteLine("\tUsage: spread (buy|sell) startPrice orderSize increment [totalamount] "));
             }
 
             return result;
@@ -1078,19 +1181,90 @@ namespace CoinbaseConsole
         public List<Action> Actions;
     }
 
+    public class TrendLineOrderOptions : SwingOrderOptions
+    {
+        public decimal DayDiff { get; private set; }
+        public decimal BuyDiff { get; private set; }
+        public decimal BuySlope { get; private set; }
+        public decimal SellDiff { get; private set; }
+        public decimal SellSlope { get; private set; }
+
+
+        public DateTime StartDate { get; private set; }
+        public DateTime EndDate { get; private set; }
+        public decimal StartBuyPrice { get; private set; }
+        public decimal EndBuyPrice { get; private set; }
+        public decimal StartSellPrice { get; private set; }
+        public decimal EndSellPrice { get; private set; }
+
+        public TrendLineOrderOptions(
+            ProductType productType,
+            DateTime start,
+            decimal startBuyPrice,
+            decimal endBuyPrice,
+            DateTime end,
+            decimal startSellPrice,
+            decimal endSellPrice
+            ) : base(productType)
+        {
+
+            this.StartDate = start;
+            this.EndDate = end;
+            this.StartBuyPrice = startBuyPrice;
+            this.EndBuyPrice = endBuyPrice;
+            this.StartSellPrice = startSellPrice;
+            this.EndSellPrice = endSellPrice;
+
+            this.DayDiff = (decimal)end.Subtract(start).TotalDays;
+            this.BuyDiff = endBuyPrice - startBuyPrice;
+            this.BuySlope = BuyDiff / DayDiff;
+
+            this.SellDiff = endSellPrice - startSellPrice;
+            this.SellSlope = SellDiff / DayDiff;
+        }
+        public override decimal BuyPrice
+        {
+            get
+            {
+                var delta = DateTime.Now.Subtract(StartDate).TotalDays;
+                return StartBuyPrice + (BuySlope * (decimal)delta).ToPrecision(Product.QuoteIncrement);
+            }
+        }
+        public override decimal SellPrice
+        {
+            get
+            {
+                var delta = DateTime.Now.Subtract(StartDate).TotalDays;
+                return StartSellPrice + (SellSlope * (decimal)delta).ToPrecision(Product.QuoteIncrement);
+            }
+        }
+    }
+
     public class SwingOrderOptions
     {
-        public decimal BuyPrice { get; set; }
-        public decimal SellPrice { get; set; }
+        public virtual decimal BuyPrice { get; private set; }
+        public virtual decimal SellPrice { get; private set; }
+        public ProductType ProductType { get; private set; }
+        public Product Product { get; private set; }
         //public EventHandler<WebfeedEventArgs<Done>> DoneHandler { get; internal set; }
         public EventHandler<WebfeedEventArgs<Match>> MatchHandler { get; internal set; }
         public EventHandler<WebfeedEventArgs<LastMatch>> LastMatchHandler { get; internal set; }
         public EventHandler<WebfeedEventArgs<Done>> DoneHandler { get; internal set; }
 
-        public SwingOrderOptions(decimal buyPrice, decimal sellPrice)
+        protected SwingOrderOptions(ProductType productType)
         {
-            this.BuyPrice = buyPrice;
-            this.SellPrice = sellPrice;
+            this.ProductType = productType;
+            this.Product = OrderService.GetProduct(productType);
+        }
+
+
+        public SwingOrderOptions(ProductType productType, decimal buyPrice, decimal sellPrice)
+            : this(productType)
+        {
+
+            this.BuyPrice = buyPrice.ToPrecision(Product.QuoteIncrement);
+            this.SellPrice = sellPrice.ToPrecision(Product.QuoteIncrement);
+            this.ProductType = productType;
         }
 
         public override string ToString()
@@ -1142,7 +1316,9 @@ namespace CoinbaseConsole
                         order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, newSize);
                         while (order.TotalAmount > amountRemaining)
                         {
-                            newSize -= 0.00000001m;
+                            var diffAmount = (order.TotalAmount - amountRemaining);
+                            var diffSize = Math.Round(diffAmount / currentPrice, 8);
+                            newSize -= diffSize;
                             order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, newSize);
                         }
 
@@ -1209,6 +1385,9 @@ namespace CoinbaseConsole
         public static ConcurrentDictionary<Guid, OrderResponse> BuyOrders = new ConcurrentDictionary<Guid, OrderResponse>();
         public static ConcurrentDictionary<Guid, OrderResponse> SellOrders = new ConcurrentDictionary<Guid, OrderResponse>();
         public static ConcurrentDictionary<Guid, OrderResponse> AllOrders = new ConcurrentDictionary<Guid, OrderResponse>();
+        private static OrderSyncer syncer = new OrderSyncer();
+        internal static List<ProductType> ProductTypes = new List<ProductType>();
+
         public OrderManager()
         {
 
@@ -1218,15 +1397,23 @@ namespace CoinbaseConsole
             var svc = new CoinbaseService();
             var statusList = new[] { OrderStatus.Active, OrderStatus.Open, OrderStatus.Pending, };
             var orders = OrderService.GetAllOrders(statusList);
-            //var orders = svc.client.OrdersService.GetAllOrdersAsync(statusList).Result.SelectMany(x => x).ToList();
+            Update(orders);
 
+        }
+
+        public static void Update(List<OrderResponse> orders)
+        {
             AllOrders = orders.ToConcurrentDictionary(x => x.Id, x => x);
             BuyOrders = orders.Where(x => x.Side == OrderSide.Buy).OrderBy(x => x.Price)
                 .ToConcurrentDictionary(x => x.Id, x => x);
             SellOrders = orders.Where(x => x.Side == OrderSide.Sell).OrderBy(x => x.Price)
                 .ToConcurrentDictionary(x => x.Id, x => x);
+            lock (ProductTypes)
+            {
+                ProductTypes.Clear();
+                ProductTypes.AddRange(orders.Select(x => x.ProductId).Distinct().OrderBy(x => x));
+            }
         }
-
         public static OrderResponse GetOrderByIndex(int orderIndex)
         {
             var key = GetOrderIdByIndex(orderIndex);

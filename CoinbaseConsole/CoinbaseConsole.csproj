@@ -146,6 +146,7 @@
   <ItemGroup>
     <Compile Include="ConsoleDriver.cs" />
     <Compile Include="MatchQueue.cs" />
+    <Compile Include="OrderSyncer.cs" />
     <Compile Include="OrderVolumeService.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
