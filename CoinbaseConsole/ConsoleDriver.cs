@@ -1771,6 +1771,7 @@ namespace CoinbaseConsole
             {
                 Log.Information("Caching products");
                 var products = TryExecute(() => service.client.ProductsService.GetAllProductsAsync().Result);
+                products = products.OrderBy(x => x.QuoteCurrency.ToString()).ThenBy(x=> x.BaseCurrency.ToString());
                 var productIds = products.Select(x => x.Id).OrderBy(x => x).ToList();
                 if (products == null)
                 {
@@ -1786,7 +1787,7 @@ namespace CoinbaseConsole
                         .ToDictionary(x => x.Id, x => x);
                     Log.Information($"Retrieved {Products.Count} products: {string.Join(", ", Products.Keys)}");
                 }
-
+                Products = Products.OrderBy(x => x.Key).ToDictionary(x => x.Key, x => x.Value);
             }
             return Products[productType];
         }
