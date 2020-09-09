@@ -1,7 +1,9 @@
 ﻿using CoinbasePro.Services.Accounts.Models;
 using CoinbasePro.Services.Orders.Models.Responses;
 using CoinbasePro.Services.Orders.Types;
+using CoinbasePro.Services.Payments.Models;
 using CoinbasePro.Services.Products.Models;
+using CoinbasePro.Services.Products.Types;
 using CoinbasePro.Shared.Types;
 using CoinbasePro.WebSocket;
 using CoinbasePro.WebSocket.Models.Response;
@@ -115,7 +117,7 @@ namespace CoinbaseConsole
                         if (!x.StartsWith("#"))
                         {
                             ParseArguments(x).Execute();
-                            System.Threading.Thread.Sleep(500);
+                            System.Threading.Thread.Sleep(200);
                         }
 
                     });
@@ -161,14 +163,14 @@ namespace CoinbaseConsole
 
             userFeed.OnOpenReceived += (sender, e) =>
             {
-                string message = $"[{DateTime.Now}] [{e.LastOrder.OrderId}] {e.LastOrder.ToDebugString()}";
+                string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 Console.WriteLine(message);
                 log.WriteLine(message);
                 OrderManager.AddOrUpdate(e.LastOrder);
             };
             userFeed.OnReceivedReceived += (sender, e) =>
             {
-                string message = $"[{DateTime.Now}]  [{e.LastOrder.OrderId}] {e.LastOrder.ToDebugString()}";
+                string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 log.WriteLine(message);
                 Console.WriteLine(message);
                 OrderManager.AddOrUpdate(e.LastOrder);
@@ -176,20 +178,20 @@ namespace CoinbaseConsole
             userFeed.OnMatchReceived += (sender, e) =>
             {
                 var myOrder = OrderManager.TryGetByFirstIds(e.LastOrder.MakerOrderId, e.LastOrder.TakerOrderId);
-                string message = $"[{DateTime.Now}] [{myOrder?.Id}] {e.LastOrder.ToDebugString()}";
+                string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 log.WriteLine(message);
                 Console.WriteLine(message);
             };
             userFeed.OnLastMatchReceived += (sender, e) =>
             {
                 var myOrder = OrderManager.TryGetByFirstIds(e.LastOrder.MakerOrderId, e.LastOrder.TakerOrderId);
-                string message = $"[{DateTime.Now}] [{myOrder.Id}] {e.LastOrder.ToDebugString()}";
+                string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 log.WriteLine(message);
                 Console.WriteLine(message);
             };
             userFeed.OnDoneReceived += (sender, e) =>
             {
-                string message = $"[{DateTime.Now}] [{e.LastOrder.OrderId}] {e.LastOrder.ToDebugString()}";
+                string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 log.WriteLine(message);
                 Console.WriteLine(message);
                 OrderManager.AddOrUpdate(e.LastOrder);
@@ -214,6 +216,12 @@ namespace CoinbaseConsole
             this.SocketLogger.LogMessageRecieved(e);
         }
 
+
+        private ProductTicker GetProductTicker(ProductType productType)
+        {
+            var svc = new CoinbaseService();
+            return svc.client.ProductsService.GetProductTickerAsync(productType).GetAwaiter().GetResult();
+        }
         public DriverOptions ParseArguments(string line)
         {
             var result = new DriverOptions();
@@ -246,13 +254,41 @@ namespace CoinbaseConsole
             {
                 commandActions.AddRange(ParseMatchQueueOptions(arguments));
             }
+            else if (arg0 == "tickers")
+            {
+                ProductSubscriptions.ForEach(product =>
+                {
+                    var ticker = GetProductTicker(product);
+                    commandActions.Add(() => Console.WriteLine($"\t{product.ToString().PadRight(9, ' ')}Last\t{ticker.Price.ToString().PadRight(11, ' ')}Bid\t{ticker.Bid.ToString().PadRight(11, ' ')}Ask\t{ticker.Ask.ToString().PadRight(11, ' ')}"));
+                });
+            }
             else if (arg0 == "ticker")
             {
-                commandActions.Add(() =>
+                if (arguments.Length == 1)
                 {
-                    if (LastTicker != null)
-                        Console.WriteLine(JsonConvert.SerializeObject(LastTicker));
-                });
+
+
+                    commandActions.Add(() =>
+                    {
+                        if (LastTicker != null)
+                            Console.WriteLine(JsonConvert.SerializeObject(LastTicker));
+                    });
+                }
+                else
+                {
+                    //if (arguments[idx].ParseEnum<ProductType>(out ProductType productType))
+                    //{
+                    //    idx++;
+                    //    SetProductType(productType);
+                    //}
+                    if (arg1.ParseEnum<ProductType>(out ProductType parsed))
+                    {
+                        var svc = new CoinbaseService();
+                        var ticker = svc.client.ProductsService.GetProductTickerAsync(parsed).GetAwaiter().GetResult();
+                        commandActions.Add(() => Console.WriteLine(JsonConvert.SerializeObject(ticker, Formatting.Indented)));
+                    }
+
+                }
             }
             else if (arg0 == "orders")
             {
@@ -371,8 +407,6 @@ namespace CoinbaseConsole
             }
             else
             {
-
-
                 //TODO: incorporate initial order size/side
                 string options = "swing [producttype] lowprice highprice";
                 Action<string> invalid = (x) =>
@@ -686,7 +720,7 @@ namespace CoinbaseConsole
                     var aggregate = MatchQueue.MatchedBuys.Aggregate();
 
                     var size = aggregate.Size;
-                    var sellPrice = options.SellPrice.ToPrecision(product.BaseIncrement);
+                    var sellPrice = options.SellPrice.ToPrecision(product.QuoteIncrement);
                     var newOrder = OrderHelper.CreatePostOnlyOrder(productType, OrderSide.Sell, sellPrice, size);
                     if (filled)
                     {
@@ -1008,7 +1042,66 @@ namespace CoinbaseConsole
                     productType = options.ProductType = ProductType;
                 }
 
-                if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal startPrice))
+                if (idx < arguments.Length && arguments.line.Contains("%"))
+                {
+                    // see if there is a start order size
+
+                    if (!arguments[idx].Contains("%"))
+                    {
+                        if (arguments[idx++].ParseDecimal(out decimal startPrice))
+                        {
+                            options.StartPrice = startPrice;
+                        }
+                        else
+                        {
+                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(options.StartPrice)}: {arguments.line}"));
+                        }
+                    }
+                    else// start price not specified, use ticker
+                    {
+                        var ticker = GetProductTicker(productType);
+                        if (options.OrderSide == OrderSide.Buy)
+                        {
+                            options.StartPrice = ticker.Bid;
+                        }
+                        else
+                        {
+                            options.StartPrice = ticker.Ask;
+                        }
+                    }
+
+                    if (!arguments[idx++].ParseDecimal(out decimal spreadPct))
+                    {
+                        result.Add(arguments.InvalidAction($"Unable to parse {nameof(spreadPct)}: {arguments.line}"));
+                    }
+                    else
+                    {
+                        options.SpreadTotalPCT = spreadPct;
+                        if (!arguments[idx++].ParseDecimal(out decimal spreadOrderSize))
+                        {
+                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(spreadOrderSize)}: {arguments.line}"));
+                        }
+                        else
+                        {
+                            options.OrderPctSize = spreadOrderSize;
+                            // spread [buy|sell]  [startPrice] [SpreadPct] [SpreadPct]
+                            if (idx == arguments.Length)
+                            {
+                                options.TotalAmount = AccountService.GetAccountBalance(productType, options.OrderSide);
+                            }
+                            else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderMax))
+                            {
+                                options.TotalAmount = orderMax;
+                            }
+                            else
+                            {
+                                result.Add(arguments.InvalidAction($"Unable to parse {nameof(orderMax)}: {arguments.line}"));
+                            }
+                        }
+                    }
+
+                }
+                else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal startPrice))
                 {
                     options.StartPrice = startPrice;
                     if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderSize))
@@ -1276,14 +1369,18 @@ namespace CoinbaseConsole
     {
         public OrderSide OrderSide { get; set; }
         public ProductType ProductType { get; set; }
+        public Product Product { get; set; }
         public decimal StartPrice { get; set; }
         public decimal OrderSize { get; set; }
         public decimal Increment { get; set; }
         public decimal TotalAmount { get; set; }
+        public decimal? SpreadTotalPCT { get; internal set; }
+        public decimal? OrderPctSize { get; internal set; }
 
         internal IEnumerable<Action> GetOrderActions()
         {
-
+            Product = OrderService.GetProduct(ProductType);
+            if (SpreadTotalPCT != null) return GetPercentageOrderActions();
             var actions = new List<Action>();
             var currentPrice = StartPrice;
             var amountRemaining = TotalAmount;
@@ -1312,13 +1409,14 @@ namespace CoinbaseConsole
                     }
                     else
                     {
-                        var newSize = Math.Round(amountRemaining / currentPrice, 8);
+                        var newSize = (amountRemaining / currentPrice).ToPrecision(Product.BaseIncrement);
                         order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, newSize);
                         while (order.TotalAmount > amountRemaining)
                         {
                             var diffAmount = (order.TotalAmount - amountRemaining);
-                            var diffSize = Math.Round(diffAmount / currentPrice, 8);
+                            var diffSize = diffAmount / currentPrice;
                             newSize -= diffSize;
+                            newSize = newSize.ToPrecision(Product.BaseIncrement);
                             order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, newSize);
                         }
 
@@ -1337,6 +1435,93 @@ namespace CoinbaseConsole
                     break;
                 }
                 currentPrice += (OrderSide == OrderSide.Buy) ? (-Increment) : Increment;
+            }
+            return actions;
+        }
+
+        private IEnumerable<Action> GetPercentageOrderActions()
+        {
+            var actions = new List<Action>();
+            var currentPrice = StartPrice;
+            var amountRemaining = TotalAmount;
+
+            if (!SpreadTotalPCT.HasValue)
+            {
+                actions.Add(() => Console.WriteLine($"{nameof(SpreadTotalPCT)} can not be null."));
+            }
+            else if (!OrderPctSize.HasValue)
+            {
+                actions.Add(() => Console.WriteLine($"{nameof(SpreadTotalPCT)} can not be null."));
+            }
+            else
+            {
+                var totalPct = SpreadTotalPCT.Value;
+                var orderPct = OrderPctSize.Value;
+                int wantedOrders = (int)(1 / orderPct);
+                var amountPerOrder = amountRemaining * orderPct;
+                var startPrice = currentPrice;
+                var targetPct = OrderSide == OrderSide.Buy ? 1 - totalPct : 1 + totalPct;
+                var targetPrice = currentPrice * targetPct;
+                var diff = Math.Abs(StartPrice - targetPrice);
+                var incRaw = (diff / wantedOrders);
+                Increment = incRaw.ToPrecision(Product.QuoteIncrement);
+
+                var product = OrderService.GetProduct(ProductType);
+
+                while (amountRemaining > 0)
+                {
+                    var orderSize = (OrderSide == OrderSide.Buy) ? 
+                        (amountPerOrder / currentPrice).ToPrecision(product.BaseIncrement) :
+                        amountPerOrder.ToPrecision(Product.BaseIncrement);
+                    var order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, orderSize);
+                    amountRemaining -= (OrderSide == OrderSide.Buy) ? order.TotalAmount : orderSize;
+                    if (amountRemaining >= 0m && order.IsValid())
+                    {
+                        actions.Add(() =>
+                        {
+                            OrderService.PlaceOrder(order);
+                            Console.WriteLine($"{DateTime.Now}: Placed order {order}");
+                            System.Threading.Thread.Sleep(100);
+                        });
+                    }
+
+                    else if (actions.Count > 0)// need to get USD amount of order
+                    {
+                        amountRemaining += order.TotalAmount;
+                        //actions.RemoveAt(actions.Count - 1);
+                        if (order.OrderSide == OrderSide.Sell)
+                        {
+                            order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, orderSize + amountRemaining);
+                        }
+                        else
+                        {
+                            var newSize = (amountRemaining / currentPrice).ToPrecision(product.BaseIncrement);
+                            order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, newSize);
+                            while (order.TotalAmount > amountRemaining)
+                            {
+                                var diffAmount = (order.TotalAmount - amountRemaining);
+                                var diffSize = (diffAmount / currentPrice);
+                                newSize -= diffSize;
+                                newSize = newSize.ToPrecision(product.BaseIncrement);
+                                order = OrderService.CreatePostOnlyOrder(ProductType, OrderSide, currentPrice, newSize);
+                            }
+
+                        }
+                        amountRemaining -= order.TotalAmount;
+                        if (amountRemaining >= 0m && order.IsValid())
+                        {
+                            actions.Add(() =>
+                            {
+                                OrderService.PlaceOrder(order);
+                                Console.WriteLine($"{DateTime.Now}: Placed order {order}");
+                                System.Threading.Thread.Sleep(100);
+                            });
+
+                        }
+                        break;
+                    }
+                    currentPrice += (OrderSide == OrderSide.Buy) ? (-Increment) : Increment;
+                }
             }
             return actions;
         }

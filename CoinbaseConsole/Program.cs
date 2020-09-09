@@ -17,6 +17,7 @@ namespace CoinbaseConsole
     {
         static void Main(string[] args)
         {
+
             //var productType = OrderService.GetProduct(ProductType.DaiUsdc);
 
             //var c = OrderService.service.client;
