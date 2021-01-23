@@ -47,7 +47,7 @@ namespace CoinbaseUtils
             }
             CurrencyDictionary = d;
             var svc = new CoinbaseService();
-            var fees = svc.client.FeesService.GetCurrentFeesAsync().Result.First();
+            var fees = svc.client.FeesService.GetCurrentFeesAsync().Result;
             CachedMakerFeeRate = fees.MakerFeeRate;
             CachedTakerFeeRate = fees.TakerFeeRate;
             var allAccounts = svc.client.

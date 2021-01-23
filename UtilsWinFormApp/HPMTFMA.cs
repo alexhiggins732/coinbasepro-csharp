@@ -80,7 +80,7 @@ namespace UtilsWinFormApp
         {
             var names = Enum.GetValues(typeof(T)).ToList<T>();
             comboBox.Items.Clear();
-            names.ForEach(x => comboBox.Items.Add(x));
+            names.OrderBy(x=> x.ToString()).ToList().ForEach(x => comboBox.Items.Add(x));
             comboBox.SelectedIndex = 0;
 
             for (var i = 0; i < comboBox.Items.Count; i++)
@@ -191,7 +191,7 @@ namespace UtilsWinFormApp
             }
 
             rdr = new TimedReader(ms, productType, candleGranularity, startDate);
-
+          
             if (this.cbGoldHistory.Checked)
             {
                 int max = rdr.MTFMaStream.MTFMa.MASizes.Length;
@@ -301,7 +301,7 @@ namespace UtilsWinFormApp
             public TimedReader(int interval, ProductType productType, CandleGranularity candleGranularity, DateTime? startDate)
             {
 
-                MTFMaStream = new HighPrecisionMTFMaStream(startDate);
+                MTFMaStream = new HighPrecisionMTFMaStream(productType, startDate);
 
                 //candleStream = new CandleDbReader(productType, CandleGranularity.Minutes1, startDate);
                 this.candleEnumerator = MTFMaStream.CandleEnumerator;

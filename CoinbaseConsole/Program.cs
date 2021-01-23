@@ -17,12 +17,13 @@ namespace CoinbaseConsole
     {
         static void Main(string[] args)
         {
-            var productType = OrderService.GetProduct(ProductType.DaiUsdc);
 
-            var c = OrderService.service.client;
+            //var productType = OrderService.GetProduct(ProductType.DaiUsdc);
+
+            //var c = OrderService.service.client;
             
 
-            var o = c.AccountsService.GetAllAccountsAsync().Result;
+            //var o = c.AccountsService.GetAllAccountsAsync().Result;
 
             RunManager();
 

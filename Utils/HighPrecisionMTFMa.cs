@@ -15,6 +15,100 @@ namespace Utils
     {
         public static void Run()
         {
+            
+            TestMultipleStartDates();
+            TestMultipleReaderStartDates();
+        }
+
+        public static void TestMultipleReaderStartDates()
+        {
+            var today = DateTime.UtcNow.Date;
+            var yesterday = today.AddDays(-1);
+
+            int dayMinutes = 1440;
+            int maxMa = dayMinutes * 255;
+            var yesterdaySampleStartDate = yesterday.AddMinutes(-maxMa);
+            var todaySampleStartDate = today.AddMinutes(-maxMa);
+            var yesterdayStream = new CandleDbReader(ProductType.LtcUsd, CandleGranularity.Minutes1, yesterdaySampleStartDate);
+            var todayStream = new CandleDbReader(ProductType.LtcUsd, CandleGranularity.Minutes1, todaySampleStartDate);
+
+            var yesterdayEnumerator = yesterdayStream.GetEnumerator();
+            var todayEnumerator = todayStream.GetEnumerator();
+
+            todayEnumerator.MoveNext();
+            yesterdayEnumerator.MoveNext();
+
+            var previous = todayEnumerator.Current.Time.AddMinutes(-1);
+            while (yesterdayEnumerator.Current.Time != previous)
+            {
+                yesterdayEnumerator.MoveNext();
+            }
+            bool moved = yesterdayEnumerator.MoveNext();
+            while (moved)
+            {
+                if (yesterdayEnumerator.Current.Time != todayEnumerator.Current.Time)
+                {
+                    string bp = $"Time Mismatch: {yesterdayEnumerator.Current.Time } - Today: {todayEnumerator.Current.Time}";
+                    throw new Exception(bp);
+                }
+                if (yesterdayEnumerator.Current.Close != todayEnumerator.Current.Close)
+                {
+                    string bp = $"Close Mismatch: {yesterdayEnumerator.Current.Time } {yesterdayEnumerator.Current.Close} - Today: {todayEnumerator.Current.Time} {todayEnumerator.Current.Close}";
+                    throw new Exception(bp);
+                }
+                moved = todayEnumerator.MoveNext() && yesterdayEnumerator.MoveNext();
+            }
+
+        }
+        public static void TestMultipleStartDates()
+        {
+            var productType = ProductType.LtcUsd;
+            CandleService.UpdateCandles(productType, true);
+            var today = DateTime.UtcNow.Date;
+            var yesterday = today.AddDays(-1);
+            var yesterdayStream = new HighPrecisionMTFMaStream(productType, yesterday);
+            while (yesterdayStream.MoveNext() && yesterdayStream.Current.Time != today)
+            {
+                //do nothing
+            }
+            var todayStream = new HighPrecisionMTFMaStream(productType, today);
+            todayStream.MoveNext();
+
+            var yesterdayMatrix = yesterdayStream.GoldMatrix();
+            var todayMatrix = todayStream.GoldMatrix();
+            var sampleStartDate = today.AddMinutes(-todayStream.MTFMa.History.Length);
+            if (!yesterdayStream.MTFMa.History.SequenceEqual(todayStream.MTFMa.History))
+            {
+                var yesterdayHistory = yesterdayStream.MTFMa.History;
+
+                var todayHistory = todayStream.MTFMa.History;
+
+                for (var i = 0; i < yesterdayHistory.Length; i++)
+                {
+                    bool matches = yesterdayHistory[i] == todayHistory[i];
+                    if (!matches)
+                    {
+                        var misMatchDate = sampleStartDate.AddMinutes(i);
+                        var yesValue = yesterdayHistory[i];
+                        var toValue = todayHistory[i];
+                        string bp = $"[{misMatchDate}] Mismatch at row {i}";
+                        Console.WriteLine($"Error: {i} {bp} - Yesterday {yesValue} - Today: {toValue}");
+                    }
+                }
+            }
+
+            for (var i = 0; i < yesterdayMatrix.Length; i++)
+            {
+                bool matches = yesterdayMatrix[i].SequenceEqual(todayMatrix[i]);
+                if (!matches)
+                {
+                    string bp = $"Mismatch at row {i}";
+                    Console.WriteLine("Error: bp");
+                }
+            }
+        }
+        public static void EnumerationTest()
+        {
             var grans = Enum.GetValues(typeof(CandleGranularity)).Cast<CandleGranularity>().Select(x => ((int)x) / 60).ToList();
             var range = Enumerable.Range(1, 256).Where(x => x == 1 || x % 5 == 0).ToList();
             var mas = range.SelectMany(i => grans.Select(gran => gran * i)).Distinct().OrderBy(x => x).ToList();
@@ -39,32 +133,39 @@ namespace Utils
 
     public class HighPrecisionMTFMaStream
     {
-        public HighPrecisionMTFMaStream(DateTime? startDate = null)
+        public HighPrecisionMTFMaStream(ProductType productType, DateTime? streamStartDate = null)
         {
-            if (startDate == null)
-                startDate = CandleService.GetMinDbCandleDate(ProductType.LtcUsd, CandleGranularity.Minutes1);
-            else
-                startDate = CandleService.GetMinDbCandleDateAfterDate(ProductType.LtcUsd, CandleGranularity.Minutes1, startDate.Value);
+            var minDbDate = CandleService.GetMinDbCandleDate(productType, CandleGranularity.Minutes1);
+            DateTime startDate = minDbDate;
+
+            if (streamStartDate != null)
+                startDate = streamStartDate.Value; // CandleService.GetMinDbCandleDateAfterDate(ProductType.LtcUsd, CandleGranularity.Minutes1, streamStartDate.Value);
 
             var grans = Enum.GetValues(typeof(CandleGranularity)).Cast<CandleGranularity>().Select(x => ((int)x) / 60).ToList();
             var range = Enumerable.Range(1, 256).Where(x => x == 1 || x % 5 == 0).ToList();
             var mas = range.SelectMany(i => grans.Select(gran => gran * i)).Distinct().OrderBy(x => x).ToList();
             var maxMa = mas.Max();
 
-            var sampleStartDate = CandleService.GetMinDbCandleDateForSampleSizeAndStartDate
-                (ProductType.LtcUsd, CandleGranularity.Minutes1, startDate.Value, maxMa);
+ 
+            var initialSampleStartDate = startDate.AddMinutes(-(maxMa));
 
-            var candleStream = new CandleDbReader(ProductType.LtcUsd, CandleGranularity.Minutes1, sampleStartDate);
+            var candleStream = new CandleDbReader(productType, CandleGranularity.Minutes1, initialSampleStartDate);
+            candles = candleStream.GetEnumerator();
+            candles.MoveNext();
+            var firstSample = (CoinbaseData.DbCandle)candles.Current;//9/15/2019 12:00:00 AM
             var samples = new List<decimal>(maxMa);
+            samples.Add(firstSample.Close.Value);
+            Candle lastSample = null;
+            while (samples.Count < maxMa)
+            {
+                bool moved = candles.MoveNext();
+                if (!moved) throw new ArgumentOutOfRangeException($"End of candle stream at {lastSample.Time}");
+                lastSample = candles.Current;
+                samples.Add(lastSample.Close.Value);
+            }
 
-            //var sampleStream = candleStream.Where(x => x.Time < startDate).OrderByDescending(x => x.Time).Take(maxMa).OrderBy(x => x.Time);
-            //var sampleCandles = sampleStream.ToArray();
-            samples.AddRange(candleStream.Take(maxMa).Select(x => (decimal)x.Close));
             MTFMa = new HighPrecisionMTFMa(mas, samples);
 
-            //var skipCount = CandleService.GetCandleCountBeforeDate(ProductType.LtcUsd, CandleGranularity.Minutes1, startDate.Value);
-            candleStream = new CandleDbReader(ProductType.LtcUsd, CandleGranularity.Minutes1, startDate);
-            candles = candleStream.GetEnumerator();
             goldMatrix = new bool[MTFMa.MovingAverages.Length][];
             for (var i = 0; i < MTFMa.MovingAverages.Length; i++)
             {
@@ -88,11 +189,13 @@ namespace Utils
             return goldMatrix;
         }
 
+        public Candle Current => candles.Current;
         public bool MoveNext()
         {
             bool result = candles.MoveNext();
             if (result)
             {
+
                 MTFMa.AddSample(candles.Current.Close.Value);
             }
             return result;

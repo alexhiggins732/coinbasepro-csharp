@@ -1,4 +1,5 @@
-﻿using CoinbasePro.Services.Orders.Models.Responses;
+﻿using CoinbasePro.Services.Orders;
+using CoinbasePro.Services.Orders.Models.Responses;
 using CoinbasePro.Shared.Types;
 using CoinbasePro.WebSocket.Models.Response;
 using Newtonsoft.Json;
@@ -164,7 +165,9 @@ namespace CoinbaseUtils
                     precision = 8;
                     break;
                 default:
-                    throw new NotImplementedException("ToCurrency({productType})");
+                    precision = 8;
+                    //throw new NotImplementedException("ToCurrency({productType})");
+                    break;
             }
             return Math.Round(value, precision).ToString();
         }
@@ -182,6 +185,8 @@ namespace CoinbaseUtils
         }
         public static string ToDebugString(this CoinbasePro.Services.Orders.Models.Responses.OrderResponse x)
         {
+            if (x == null)
+                return "Invalid order resposne;";
             return $"{x.Id}: {x.Size} @ {x.Price.ToCurrency(x.ProductId)} ({x.FillFees.ToCurrency(x.ProductId)}) = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
         }
         public static string ToDebugString(this Open x)
@@ -196,7 +201,15 @@ namespace CoinbaseUtils
 
         public static string ToDebugString(this Done x)
         {
-            return $"Done: {x.OrderId} {x.ProductId} {x.Side} {x.Reason} @ {x.Price.ToCurrency(x.ProductId)} = ({(x.Price * x.RemainingSize).ToCurrency(x.ProductId)})";
+            var total = (x.Price * x.RemainingSize);
+            var totalCurr = total.ToCurrency(x.ProductId);
+            var result = $"Done: {x.OrderId} {x.ProductId} {x.Side} {x.Reason} @ {x.Price.ToCurrency(x.ProductId)} = ({totalCurr})";
+            if (total == 0m || totalCurr=="0" || totalCurr== "0.0000")
+            {
+                string bp = "WTF";
+            }
+            Console.WriteLine($" internal=>  {result}");
+            return result;
         }
 
         public static string ToDebugString(this Match x)
@@ -213,6 +226,25 @@ namespace CoinbaseUtils
         public static string ToDebugString(this Ticker x)
         {
             return $"Ticker: {x.ProductId} Buy: {x.BestBid.ToCurrency(x.ProductId)} Ask: {x.BestAsk.ToCurrency(x.ProductId)} Last: {x.LastSize} @ {x.Price.ToCurrency(x.ProductId)} = {(x.LastSize * x.Price).ToCurrency(x.ProductId)}";
+        }
+
+        public static bool TryParsePercent(this string value, out decimal result)
+        {
+            bool parsed = false;
+            if (string.IsNullOrEmpty(value))
+            {
+                result = 0;
+            }
+            else
+            {
+                var cleaned = value.Trim().TrimEnd('%');
+                parsed = decimal.TryParse(cleaned, out result);
+                if (parsed)
+                {
+                    result /= 100;
+                }
+            }
+            return parsed;
         }
     }
 }

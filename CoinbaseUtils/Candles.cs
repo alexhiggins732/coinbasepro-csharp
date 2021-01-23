@@ -19,7 +19,10 @@ namespace CoinbaseUtils
             var svc = candleService;
             int minutesPerCandle = ((int)granularity) / 60;
             int minutesPerOffset = 300 * minutesPerCandle;
-
+            if (startDate.Year < 2010)
+            {
+                startDate = GetMinCandleDateFromApi(productType);
+            }
             var endDate = startDate.AddMinutes(minutesPerOffset);
             if (endDate > maxDate)
             {
@@ -80,7 +83,8 @@ namespace CoinbaseUtils
                     //    endDate = maxDate;
                     //}
                     var elapsedMs = (int)sw.ElapsedMilliseconds;
-                    var sleep = Math.Max(0, 600 - elapsedMs);
+                    //600 exceeded
+                    var sleep = Math.Max(0, 1000 - elapsedMs);
                     System.Threading.Thread.Sleep(sleep);
 
                 }

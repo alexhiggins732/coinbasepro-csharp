@@ -30,6 +30,15 @@
         ZRX,
         ALGO,
         LINK,
-        DASH
+        DASH,
+        OXT,
+        ATOM,
+        OMG,
+        KNC,
+        COMP,
+        BAND,
+        CELO,
+        NMR,
+        UMA
     }
 }

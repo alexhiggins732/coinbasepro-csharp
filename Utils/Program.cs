@@ -16,6 +16,22 @@ namespace Utils
     {
         static void Main(string[] args)
         {
+            if (args != null && args.Length > 0)
+            {
+                if (args[0].ToLower() == "update")
+                {
+                    if (args.Length > 1 && TryParseEnum<ProductType>(args[1], out ProductType productType))
+                    {
+                        CandleService.UpdateCandles(productType);
+                        return;
+                    }
+                    else
+                    {
+                        Console.WriteLine("invalid product type");
+                        return;
+                    }
+                }
+            }
             HighPrecisionMTFMaTests.Run();
             Statistics.SmaTests.RunCandleStreamAllMasCrossOverAgentTests();
             if (bool.Parse(bool.TrueString))
@@ -25,9 +41,9 @@ namespace Utils
             Statistics.SmaTests.RunTests();
 
             var candleStream = new CandleDbReader(ProductType.LtcUsd, CandleGranularity.Minutes1);
-            int count =0;
+            int count = 0;
             var avg = candleStream.Sum(x => x.Volume);
-            foreach(var candle in candleStream)
+            foreach (var candle in candleStream)
             {
                 count++;
                 if ((count & 65535) == 0)
@@ -35,6 +51,22 @@ namespace Utils
             }
 
             RunPotentialTest();
+        }
+
+        private static bool TryParseEnum<T>(string value, out T productType)
+            where T : struct
+        {
+            var names = Enum.GetNames(typeof(T));
+            productType = default(T);
+            foreach (var name in names)
+            {
+                if (string.Compare(value, name, true) == 0)
+                {
+                    var result =Enum.TryParse<T>(name, out productType);
+                    return result;
+                }
+            }
+            return false;
         }
 
         private static void RunMaTest()
@@ -48,6 +80,8 @@ namespace Utils
             var profit = trades.Sum(x => x.NetProfit);
         }
     }
+
+
     public class PotentialCalculator
     {
         ProductType ProductType;
@@ -120,7 +154,7 @@ namespace Utils
         {
 
             List<BestTrade> result = new List<BestTrade>();
-            
+
             decimal rangeLow;
             decimal rangeHigh;
 
@@ -132,7 +166,7 @@ namespace Utils
                 // 1) Find the High.
                 rangeHigh = conn.QuerySingle<decimal>($"select IsNull(max({CloseColumnEscaped}), 0) from {TableName} where {timeFilter}",
                     new { rangeStartDate, rangeEndDate });
-                
+
                 if (rangeHigh == 0)
                 {
                     return result;
@@ -170,16 +204,17 @@ namespace Utils
             if (initial.Net < 1m)
             {
                 result.Add(initial);
-            } else
+            }
+            else
             {
                 // we have three ranges to check.
-                if (rangeStartDate==rangeLowDate && rangeEndDate == rangeHighDate)
+                if (rangeStartDate == rangeLowDate && rangeEndDate == rangeHighDate)
                 {
                     string bp = "";
                 }
                 var bestLeft = GetBestTrades(rangeStartDate, rangeLowDate);
                 var bestMid = GetBestTrades(rangeLowDate, rangeHighDate);
-                var bestRight= GetBestTrades(rangeHighDate, rangeEndDate);
+                var bestRight = GetBestTrades(rangeHighDate, rangeEndDate);
                 var leftSum = bestLeft.Sum(x => x.NetProfit);
                 var midSum = bestMid.Sum(x => x.NetProfit);
                 var rightSum = bestRight.Sum(x => x.NetProfit);
@@ -206,6 +241,6 @@ namespace Utils
         public decimal Net { get; internal set; }
         public decimal Gross { get; internal set; }
         public decimal NetProfit { get; private set; }
-      
+
     }
 }
