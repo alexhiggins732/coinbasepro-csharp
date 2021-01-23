@@ -51,6 +51,7 @@
             this.label6 = new System.Windows.Forms.Label();
             this.dtpFrom = new System.Windows.Forms.DateTimePicker();
             this.groupBox3 = new System.Windows.Forms.GroupBox();
+            this.btnOpenHPMTFMA = new System.Windows.Forms.Button();
             ((System.ComponentModel.ISupportInitialize)(this.pictureBox1)).BeginInit();
             this.groupBox1.SuspendLayout();
             this.groupBox2.SuspendLayout();
@@ -60,18 +61,19 @@
             // 
             // pictureBox1
             // 
-            this.pictureBox1.Location = new System.Drawing.Point(11, 120);
+            this.pictureBox1.Location = new System.Drawing.Point(22, 231);
             this.pictureBox1.Margin = new System.Windows.Forms.Padding(0);
             this.pictureBox1.Name = "pictureBox1";
-            this.pictureBox1.Size = new System.Drawing.Size(255, 253);
+            this.pictureBox1.Size = new System.Drawing.Size(512, 512);
             this.pictureBox1.TabIndex = 0;
             this.pictureBox1.TabStop = false;
             // 
             // btnStart
             // 
-            this.btnStart.Location = new System.Drawing.Point(198, 60);
+            this.btnStart.Location = new System.Drawing.Point(396, 115);
+            this.btnStart.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.btnStart.Name = "btnStart";
-            this.btnStart.Size = new System.Drawing.Size(75, 23);
+            this.btnStart.Size = new System.Drawing.Size(150, 44);
             this.btnStart.TabIndex = 2;
             this.btnStart.Text = "Start";
             this.btnStart.UseVisualStyleBackColor = true;
@@ -79,9 +81,10 @@
             // 
             // btnGo
             // 
-            this.btnGo.Location = new System.Drawing.Point(198, 19);
+            this.btnGo.Location = new System.Drawing.Point(396, 37);
+            this.btnGo.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.btnGo.Name = "btnGo";
-            this.btnGo.Size = new System.Drawing.Size(75, 23);
+            this.btnGo.Size = new System.Drawing.Size(150, 44);
             this.btnGo.TabIndex = 1;
             this.btnGo.Text = "Go";
             this.btnGo.UseVisualStyleBackColor = true;
@@ -94,18 +97,21 @@
             this.groupBox1.Controls.Add(this.btnGo);
             this.groupBox1.Controls.Add(this.btnNext);
             this.groupBox1.Controls.Add(this.btnStart);
-            this.groupBox1.Location = new System.Drawing.Point(273, 13);
+            this.groupBox1.Location = new System.Drawing.Point(546, 25);
+            this.groupBox1.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.groupBox1.Name = "groupBox1";
-            this.groupBox1.Size = new System.Drawing.Size(279, 89);
+            this.groupBox1.Padding = new System.Windows.Forms.Padding(6, 6, 6, 6);
+            this.groupBox1.Size = new System.Drawing.Size(558, 171);
             this.groupBox1.TabIndex = 3;
             this.groupBox1.TabStop = false;
             this.groupBox1.Text = "Gold Test";
             // 
             // btnUpdateDb
             // 
-            this.btnUpdateDb.Location = new System.Drawing.Point(6, 21);
+            this.btnUpdateDb.Location = new System.Drawing.Point(12, 40);
+            this.btnUpdateDb.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.btnUpdateDb.Name = "btnUpdateDb";
-            this.btnUpdateDb.Size = new System.Drawing.Size(75, 23);
+            this.btnUpdateDb.Size = new System.Drawing.Size(150, 44);
             this.btnUpdateDb.TabIndex = 9;
             this.btnUpdateDb.Text = "Db Update";
             this.btnUpdateDb.UseVisualStyleBackColor = true;
@@ -113,9 +119,10 @@
             // 
             // button1
             // 
-            this.button1.Location = new System.Drawing.Point(6, 60);
+            this.button1.Location = new System.Drawing.Point(12, 115);
+            this.button1.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.button1.Name = "button1";
-            this.button1.Size = new System.Drawing.Size(75, 23);
+            this.button1.Size = new System.Drawing.Size(150, 44);
             this.button1.TabIndex = 8;
             this.button1.Text = "Restart";
             this.button1.UseVisualStyleBackColor = true;
@@ -123,9 +130,10 @@
             // 
             // btnNext
             // 
-            this.btnNext.Location = new System.Drawing.Point(105, 60);
+            this.btnNext.Location = new System.Drawing.Point(210, 115);
+            this.btnNext.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.btnNext.Name = "btnNext";
-            this.btnNext.Size = new System.Drawing.Size(75, 23);
+            this.btnNext.Size = new System.Drawing.Size(150, 44);
             this.btnNext.TabIndex = 7;
             this.btnNext.Text = "Next";
             this.btnNext.UseVisualStyleBackColor = true;
@@ -134,49 +142,55 @@
             // label1
             // 
             this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(6, 76);
+            this.label1.Location = new System.Drawing.Point(12, 146);
+            this.label1.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(36, 13);
+            this.label1.Size = new System.Drawing.Size(73, 25);
             this.label1.TabIndex = 0;
             this.label1.Text = "Close:";
             // 
             // txtClose
             // 
-            this.txtClose.Location = new System.Drawing.Point(70, 73);
+            this.txtClose.Location = new System.Drawing.Point(140, 140);
+            this.txtClose.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.txtClose.Name = "txtClose";
-            this.txtClose.Size = new System.Drawing.Size(178, 20);
+            this.txtClose.Size = new System.Drawing.Size(352, 31);
             this.txtClose.TabIndex = 1;
             // 
             // label2
             // 
             this.label2.AutoSize = true;
-            this.label2.Location = new System.Drawing.Point(6, 24);
+            this.label2.Location = new System.Drawing.Point(12, 46);
+            this.label2.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label2.Name = "label2";
-            this.label2.Size = new System.Drawing.Size(33, 13);
+            this.label2.Size = new System.Drawing.Size(63, 25);
             this.label2.TabIndex = 2;
             this.label2.Text = "Date:";
             // 
             // txtDate
             // 
-            this.txtDate.Location = new System.Drawing.Point(70, 21);
+            this.txtDate.Location = new System.Drawing.Point(140, 40);
+            this.txtDate.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.txtDate.Name = "txtDate";
-            this.txtDate.Size = new System.Drawing.Size(178, 20);
+            this.txtDate.Size = new System.Drawing.Size(352, 31);
             this.txtDate.TabIndex = 3;
             // 
             // label7
             // 
             this.label7.AutoSize = true;
-            this.label7.Location = new System.Drawing.Point(6, 50);
+            this.label7.Location = new System.Drawing.Point(12, 96);
+            this.label7.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label7.Name = "label7";
-            this.label7.Size = new System.Drawing.Size(49, 13);
+            this.label7.Size = new System.Drawing.Size(97, 25);
             this.label7.TabIndex = 4;
             this.label7.Text = "Sma256:";
             // 
             // txtStart
             // 
-            this.txtStart.Location = new System.Drawing.Point(70, 47);
+            this.txtStart.Location = new System.Drawing.Point(140, 90);
+            this.txtStart.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.txtStart.Name = "txtStart";
-            this.txtStart.Size = new System.Drawing.Size(178, 20);
+            this.txtStart.Size = new System.Drawing.Size(352, 31);
             this.txtStart.TabIndex = 5;
             // 
             // groupBox2
@@ -187,23 +201,26 @@
             this.groupBox2.Controls.Add(this.label2);
             this.groupBox2.Controls.Add(this.txtClose);
             this.groupBox2.Controls.Add(this.label1);
-            this.groupBox2.Location = new System.Drawing.Point(12, 13);
+            this.groupBox2.Location = new System.Drawing.Point(24, 25);
+            this.groupBox2.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.groupBox2.Name = "groupBox2";
-            this.groupBox2.Size = new System.Drawing.Size(254, 102);
+            this.groupBox2.Padding = new System.Windows.Forms.Padding(6, 6, 6, 6);
+            this.groupBox2.Size = new System.Drawing.Size(508, 196);
             this.groupBox2.TabIndex = 5;
             this.groupBox2.TabStop = false;
             this.groupBox2.Text = "Current";
             // 
             // numericUpDown1
             // 
-            this.numericUpDown1.Location = new System.Drawing.Point(153, 19);
+            this.numericUpDown1.Location = new System.Drawing.Point(306, 37);
+            this.numericUpDown1.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.numericUpDown1.Minimum = new decimal(new int[] {
             1,
             0,
             0,
             0});
             this.numericUpDown1.Name = "numericUpDown1";
-            this.numericUpDown1.Size = new System.Drawing.Size(120, 20);
+            this.numericUpDown1.Size = new System.Drawing.Size(240, 31);
             this.numericUpDown1.TabIndex = 4;
             this.numericUpDown1.Value = new decimal(new int[] {
             4,
@@ -215,9 +232,10 @@
             // label3
             // 
             this.label3.AutoSize = true;
-            this.label3.Location = new System.Drawing.Point(6, 21);
+            this.label3.Location = new System.Drawing.Point(12, 40);
+            this.label3.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label3.Name = "label3";
-            this.label3.Size = new System.Drawing.Size(24, 13);
+            this.label3.Size = new System.Drawing.Size(48, 25);
             this.label3.TabIndex = 5;
             this.label3.Text = "Fps";
             // 
@@ -227,17 +245,19 @@
             this.cmbProductType.Items.AddRange(new object[] {
             "LtcUsd",
             "BtcUsd"});
-            this.cmbProductType.Location = new System.Drawing.Point(153, 45);
+            this.cmbProductType.Location = new System.Drawing.Point(306, 87);
+            this.cmbProductType.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.cmbProductType.Name = "cmbProductType";
-            this.cmbProductType.Size = new System.Drawing.Size(121, 21);
+            this.cmbProductType.Size = new System.Drawing.Size(238, 33);
             this.cmbProductType.TabIndex = 6;
             // 
             // label4
             // 
             this.label4.AutoSize = true;
-            this.label4.Location = new System.Drawing.Point(6, 48);
+            this.label4.Location = new System.Drawing.Point(12, 92);
+            this.label4.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label4.Name = "label4";
-            this.label4.Size = new System.Drawing.Size(34, 13);
+            this.label4.Size = new System.Drawing.Size(66, 25);
             this.label4.TabIndex = 7;
             this.label4.Text = "Type:";
             // 
@@ -247,34 +267,38 @@
             this.cmbGran.Items.AddRange(new object[] {
             "LtcUsd",
             "BtcUsd"});
-            this.cmbGran.Location = new System.Drawing.Point(152, 72);
+            this.cmbGran.Location = new System.Drawing.Point(304, 138);
+            this.cmbGran.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.cmbGran.Name = "cmbGran";
-            this.cmbGran.Size = new System.Drawing.Size(121, 21);
+            this.cmbGran.Size = new System.Drawing.Size(238, 33);
             this.cmbGran.TabIndex = 8;
             // 
             // label5
             // 
             this.label5.AutoSize = true;
-            this.label5.Location = new System.Drawing.Point(6, 75);
+            this.label5.Location = new System.Drawing.Point(12, 144);
+            this.label5.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label5.Name = "label5";
-            this.label5.Size = new System.Drawing.Size(33, 13);
+            this.label5.Size = new System.Drawing.Size(65, 25);
             this.label5.TabIndex = 9;
             this.label5.Text = "Gran:";
             // 
             // label6
             // 
             this.label6.AutoSize = true;
-            this.label6.Location = new System.Drawing.Point(7, 105);
+            this.label6.Location = new System.Drawing.Point(14, 202);
+            this.label6.Margin = new System.Windows.Forms.Padding(6, 0, 6, 0);
             this.label6.Name = "label6";
-            this.label6.Size = new System.Drawing.Size(33, 13);
+            this.label6.Size = new System.Drawing.Size(67, 25);
             this.label6.TabIndex = 10;
             this.label6.Text = "From:";
             // 
             // dtpFrom
             // 
-            this.dtpFrom.Location = new System.Drawing.Point(73, 99);
+            this.dtpFrom.Location = new System.Drawing.Point(146, 190);
+            this.dtpFrom.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.dtpFrom.Name = "dtpFrom";
-            this.dtpFrom.Size = new System.Drawing.Size(200, 20);
+            this.dtpFrom.Size = new System.Drawing.Size(396, 31);
             this.dtpFrom.TabIndex = 11;
             // 
             // groupBox3
@@ -287,23 +311,37 @@
             this.groupBox3.Controls.Add(this.cmbProductType);
             this.groupBox3.Controls.Add(this.label3);
             this.groupBox3.Controls.Add(this.numericUpDown1);
-            this.groupBox3.Location = new System.Drawing.Point(273, 109);
+            this.groupBox3.Location = new System.Drawing.Point(546, 210);
+            this.groupBox3.Margin = new System.Windows.Forms.Padding(6, 6, 6, 6);
             this.groupBox3.Name = "groupBox3";
-            this.groupBox3.Size = new System.Drawing.Size(279, 133);
+            this.groupBox3.Padding = new System.Windows.Forms.Padding(6, 6, 6, 6);
+            this.groupBox3.Size = new System.Drawing.Size(558, 256);
             this.groupBox3.TabIndex = 6;
             this.groupBox3.TabStop = false;
             this.groupBox3.Text = "Settings";
             // 
+            // btnOpenHPMTFMA
+            // 
+            this.btnOpenHPMTFMA.Location = new System.Drawing.Point(546, 478);
+            this.btnOpenHPMTFMA.Margin = new System.Windows.Forms.Padding(6);
+            this.btnOpenHPMTFMA.Name = "btnOpenHPMTFMA";
+            this.btnOpenHPMTFMA.Size = new System.Drawing.Size(150, 44);
+            this.btnOpenHPMTFMA.TabIndex = 9;
+            this.btnOpenHPMTFMA.Text = "HP MTF MA";
+            this.btnOpenHPMTFMA.UseVisualStyleBackColor = true;
+            this.btnOpenHPMTFMA.Click += new System.EventHandler(this.btnOpenHPMTFMA_Click);
+            // 
             // Form1
             // 
-            this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
+            this.AutoScaleDimensions = new System.Drawing.SizeF(12F, 25F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(564, 433);
+            this.ClientSize = new System.Drawing.Size(1128, 833);
+            this.Controls.Add(this.btnOpenHPMTFMA);
             this.Controls.Add(this.groupBox3);
             this.Controls.Add(this.groupBox2);
             this.Controls.Add(this.groupBox1);
             this.Controls.Add(this.pictureBox1);
-            this.Margin = new System.Windows.Forms.Padding(2);
+            this.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.Name = "Form1";
             this.Text = "Form1";
             ((System.ComponentModel.ISupportInitialize)(this.pictureBox1)).EndInit();
@@ -342,6 +380,7 @@
         private System.Windows.Forms.Label label6;
         private System.Windows.Forms.DateTimePicker dtpFrom;
         private System.Windows.Forms.GroupBox groupBox3;
+        private System.Windows.Forms.Button btnOpenHPMTFMA;
     }
 }
 

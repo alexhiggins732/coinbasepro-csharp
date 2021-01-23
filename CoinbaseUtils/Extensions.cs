@@ -155,6 +155,11 @@ namespace CoinbaseUtils
             int precision = defaultPrecision;
             switch (productType)
             {
+                case ProductType.BtcUsd:
+                case ProductType.BtcUsdc:
+                case ProductType.LtcUsd:
+                case ProductType.EthUsd:
+                case ProductType.EthUsdc:
                 case ProductType.DaiUsdc:
                     precision = 8;
                     break;

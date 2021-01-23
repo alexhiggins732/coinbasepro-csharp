@@ -205,6 +205,10 @@ namespace CoinbaseConsole
                 commandActions.AddRange(ParseCancellationOptions(arguments));
                 //cancel all, cancel buys, cancel sells, cancel all buys, cancel all sells
             }
+            if (arg0 == "fees")
+            {
+                commandActions.AddRange(ParseFeeOptions(arguments));
+            }
             else if (arg0 == "volume")
             {
                 commandActions.AddRange(ParseVolumeOptions(arguments));
@@ -253,6 +257,13 @@ namespace CoinbaseConsole
             result.Actions = commandActions;
             return result;
 
+        }
+        private IEnumerable<Action> ParseFeeOptions(ArgumentList arguments)
+        {
+            var service = new AccountService(true);
+            var result = new List<Action>();
+            result.Add(() => Console.WriteLine($"{tabbracket}: Maker Fee: {service.MakerFeeRate.ToString("P")} Taker Fee: {service.TakerFeeRate.ToString("P")}"));
+            return result;
         }
 
         private IEnumerable<Action> ParseVolumeOptions(ArgumentList arguments)
@@ -1137,7 +1148,11 @@ namespace CoinbaseConsole
         {
 
             var order = OrderService.GetOrderById(orderId);
-
+            if (order == null)
+            {
+                AllOrders.TryRemove(orderId, out OrderResponse ex);
+                return;
+            }
             AllOrders.AddOrUpdate(order.Id, order, (id, existing) => order);
             var side = order.Side;
             if (side == OrderSide.Buy)
@@ -1378,6 +1393,7 @@ namespace CoinbaseConsole
             Log.Information($"Called {nameof(OrderService)}.{nameof(GetAllOrders)}({string.Join(", ", statusList)})");
             var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync(statusList).Result);
             var result = apiResult?.SelectMany(lst => lst.Select(x => x)).ToList();
+
             Log.Information($"Retrieved orders {string.Join(", ", result.Select(x => x.Id))}");
             return result;
         }
@@ -1474,7 +1490,7 @@ namespace CoinbaseConsole
             decimal total = price * orderSize;
             decimal fee = total * feerate;
             var totalAmount = total + fee;
-            return new TradeOrder(productType, orderSide, price, orderSize, fee, totalAmount);
+            return new TradeOrder(productType, orderSide, price, orderSize, fee, feerate, totalAmount);
 
         }
     }
@@ -1486,18 +1502,20 @@ namespace CoinbaseConsole
         public decimal Price { get; set; }
         public decimal OrderSize { get; set; }
         public decimal Fee { get; set; }
+        public decimal FeeRate { get; set; }
         public decimal TotalAmount { get; set; }
 
         public bool Market { get; set; }
 
         public Guid ClientId { get; set; }
-        public TradeOrder(ProductType productType, OrderSide orderSide, decimal price, decimal orderSize, decimal fee, decimal totalAmount)
+        public TradeOrder(ProductType productType, OrderSide orderSide, decimal price, decimal orderSize, decimal fee, decimal feeRate, decimal totalAmount)
         {
             this.ProductType = productType;
             this.OrderSide = orderSide;
             this.Price = price;
             this.OrderSize = orderSize;
             this.Fee = fee;
+            this.FeeRate = feeRate;
             this.TotalAmount = totalAmount;
             this.ClientId = Guid.NewGuid();
         }

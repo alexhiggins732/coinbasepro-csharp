@@ -57,8 +57,17 @@ namespace CoinbaseUtils
         public static DateTime GetMinDbCandleDate(ProductType productType, CandleGranularity granularity)
             => DbCandles.GetMinDbCandleDate(productType, granularity);
 
+        public static DateTime GetMinDbCandleDateAfterDate(ProductType productType, CandleGranularity granularity, DateTime startDate)
+           => DbCandles.GetMinDbCandleDateAfterDate(productType, granularity, startDate);
+
         public static DateTime GetMaxDbCandleDate(ProductType productType, CandleGranularity granularity)
             => DbCandles.GetMaxDbCandleDate(productType, granularity);
+
+        public static DateTime GetMinDbCandleDateForSampleSizeAndStartDate(ProductType productType, CandleGranularity granularity, DateTime startDate, int sampleSize)
+            => DbCandles.GetMinDbCandleDateForSampleSizeAndStartDate(productType, granularity, startDate, sampleSize);
+
+        public static int GetCandleCountBeforeDate(ProductType productType, CandleGranularity granularity, DateTime startDate)
+             => DbCandles.GetCandleCountBeforeDate(productType, granularity, startDate);
 
         public static void UpdateCandles(ProductType selectedProductType, bool force = false)
         {
@@ -116,7 +125,104 @@ namespace CoinbaseUtils
 
 
     }
+
     public class DbCandleEnumerator : IEnumerator<Candle>
+    {
+
+        DbCandleEnumeratorWithMissing enumerator;
+        int incMinutes;
+        public DbCandleEnumerator(ProductType productType, DateTime startDate, DateTime endDate, CandleGranularity granularity)
+        {
+            incMinutes = ((int)granularity) / 60;
+            this.enumerator = new DbCandleEnumeratorWithMissing(productType, startDate, endDate, granularity);
+        }
+
+        public Candle Current => CurrentCandle;
+        private Candle CurrentCandle = null;
+        private Candle NextCandle = null;
+        private Candle GetCurrentCandle()
+        {
+            return CurrentCandle;
+        }
+        object IEnumerator.Current => Current;
+
+        public void Dispose()
+        {
+            enumerator.Dispose();
+            enumerator = null;
+        }
+
+
+        public bool MoveNext()
+        {
+            bool result = false;
+            if (CurrentCandle == null)
+            {
+                result = enumerator.MoveNext();
+                if (result)
+                {
+                    CurrentCandle = enumerator.Current;
+                }
+            }
+            else
+            {
+                if (NextCandle == null)
+                {
+                    result = enumerator.MoveNext();
+                    if (result)
+                    {
+                        NextCandle = enumerator.Current;
+                        CurrentCandle.Time = CurrentCandle.Time.AddMinutes(incMinutes);
+                        if (CurrentCandle.Time == NextCandle.Time)
+                        {
+                            CurrentCandle = NextCandle;
+                            NextCandle = null;
+                        }
+                        else
+                        {
+                            //set all values to the previous close and set the volume to 0;
+                            CurrentCandle.Open = CurrentCandle.High = CurrentCandle.Low = CurrentCandle.Close;
+                            CurrentCandle.Volume = 0;
+                        }
+                    }
+                }
+                else // we have a bufferred next candle due to missing candles.
+                {
+                    CurrentCandle.Time = CurrentCandle.Time.AddMinutes(incMinutes);
+                    result = CurrentCandle.Time <= enumerator.EndDate;
+                    if (result)
+                    {
+                        //if the buffered next candle is the correct time return it as current
+                        if (CurrentCandle.Time == NextCandle.Time)
+                        {
+                            CurrentCandle = NextCandle;
+                            NextCandle = null;
+
+                        }
+                        else
+                        {
+
+                            //properties should already be cleared but...
+                            // explicitiy set them in case the if branch that sets the properties gets changed.
+                            CurrentCandle.Open = CurrentCandle.High = CurrentCandle.Low = CurrentCandle.Close;
+                            CurrentCandle.Volume = 0;
+                        }
+                    } else
+                    {
+                        CurrentCandle = null;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        public void Reset()
+        {
+            throw new NotImplementedException();
+        }
+    }
+    public class DbCandleEnumeratorWithMissing : IEnumerator<Candle>
     {
         public List<Candle> Buffer { get; private set; }
         public ProductType productType { get; private set; }
@@ -130,7 +236,7 @@ namespace CoinbaseUtils
         private int bufferSize;
         private int secondsPerBuffer;
         private int bufferIndex;
-        public DbCandleEnumerator(ProductType productType, DateTime startDate, DateTime endDate, CandleGranularity granularity)
+        public DbCandleEnumeratorWithMissing(ProductType productType, DateTime startDate, DateTime endDate, CandleGranularity granularity)
         {
             this.productType = productType;
             StartDate = startDate;

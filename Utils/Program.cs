@@ -16,6 +16,12 @@ namespace Utils
     {
         static void Main(string[] args)
         {
+            HighPrecisionMTFMaTests.Run();
+            Statistics.SmaTests.RunCandleStreamAllMasCrossOverAgentTests();
+            if (bool.Parse(bool.TrueString))
+            {
+                return;
+            }
             Statistics.SmaTests.RunTests();
 
             var candleStream = new CandleDbReader(ProductType.LtcUsd, CandleGranularity.Minutes1);
