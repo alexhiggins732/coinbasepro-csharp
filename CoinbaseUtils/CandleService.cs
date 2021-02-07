@@ -165,7 +165,7 @@ namespace CoinbaseUtils
         private int bufferSize;
         private int secondsPerBuffer;
         private int bufferIndex;
-        public DbCandleEnumeratorWithMissing(ProductType productType, DateTime startDate, DateTime endDate, CandleGranularity granularity)
+        public DbCandleEnumerator(ProductType productType, DateTime startDate, DateTime endDate, CandleGranularity granularity)
         {
             this.productType = productType;
             StartDate = startDate;
