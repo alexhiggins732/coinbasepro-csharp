@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Dapper;
+
 namespace CoinbaseData
 {
     public class DbCandle
@@ -229,3 +230,5 @@ namespace CoinbaseData
 
     }
 }
+
+

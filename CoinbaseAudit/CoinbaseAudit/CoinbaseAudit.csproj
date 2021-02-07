@@ -4,16 +4,17 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{E49C23C6-F5E2-4B81-B441-D7D6700B8835}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>CoinbaseData</RootNamespace>
-    <AssemblyName>CoinbaseData</AssemblyName>
+    <ProjectGuid>{99015E56-D0EA-43AC-ABFA-E02BD903F60D}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>CoinbaseAudit</RootNamespace>
+    <AssemblyName>CoinbaseAudit</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
@@ -23,6 +24,7 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
@@ -34,6 +36,9 @@
     <Reference Include="Dapper, Version=2.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\Dapper.2.0.30\lib\net461\Dapper.dll</HintPath>
     </Reference>
+    <Reference Include="Newtonsoft.Json, Version=12.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>..\packages\Newtonsoft.Json.12.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml.Linq" />
@@ -44,20 +49,28 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="DbCandles.cs" />
-    <Compile Include="DbFill.cs" />
-    <Compile Include="DbFills.cs" />
-    <Compile Include="TableHelper.cs" />
+    <Compile Include="Account.cs" />
+    <Compile Include="AccountAudit.cs" />
+    <Compile Include="AuditFill.cs" />
+    <Compile Include="AuditManagerUSD.cs" />
+    <Compile Include="AuditManager.cs" />
+    <Compile Include="AuditRepo.cs" />
+    <Compile Include="AuditTx.cs" />
+    <Compile Include="CoinbaseTxnSide.cs" />
+    <Compile Include="DecimalExtensions.cs" />
+    <Compile Include="Fill.cs" />
+    <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\CoinbasePro\CoinbasePro.csproj">
-      <Project>{454a0fac-c580-4674-ae58-6d8e6658685b}</Project>
-      <Name>CoinbasePro</Name>
-    </ProjectReference>
+    <None Include="App.config" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
+    <ProjectReference Include="..\..\CoinbaseData\CoinbaseData.csproj">
+      <Project>{E49C23C6-F5E2-4B81-B441-D7D6700B8835}</Project>
+      <Name>CoinbaseData</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

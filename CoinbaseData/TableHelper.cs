@@ -49,7 +49,7 @@ namespace CoinbaseData
         }
 
 
-  
+
         public static string InsertTableScript<T>(string tableName = null)
         {
             if (InsertScripts.ContainsKey(tableName))
@@ -102,12 +102,30 @@ namespace CoinbaseData
             sb.Append($"\t{string.Join(",\r\n\t", columnList.Select(x => $"[{x}] = @{x}"))}");
             sb.Append("\r\nWhere");
             sb.Append($"\r\n\t[{keyColumn}] = @{keyColumn}");
-            
+
             var result = sb.ToString();
             UpdateScripts[tableName] = result;
             return result;
         }
 
+        public static List<T> GetByQuery<T>(string query, object param = null)
+        {
+            using (var conn = new SqlConnection(ConnectionString))
+            {
+                List<T> items = conn.Query<T>(query, param).ToList();
+                return items;
+            }
+        }
+        public static List<T> Get<T>(string tableName = null, string orderby = null)
+        {
+            string query = $"Select * from [{tableName ?? typeof(T).Name}]";
+            if (orderby != null) query += $" {orderby}";
+            using (var conn = new SqlConnection(ConnectionString))
+            {
+                List<T> items = conn.Query<T>(query).ToList();
+                return items;
+            }
+        }
 
         public static void Save<T>(Func<IEnumerable<T>> p, string tableName)
         {

@@ -42,30 +42,12 @@ namespace CoinbaseConsole
         }
     }
 
-    public class Log
-    {
-        public static Log Instance = new Log(DefaultLogger());
-        public static TextWriter DefaultLogger()
-        {
-            return new StreamWriter("socket.log", true);
-        }
-        public TextWriter output;
-        public Log(TextWriter output)
-        {
-            this.output = output;
-        }
-        internal static void Error(string message)
-        {
-            Instance.output.WriteLine($"[{DateTime.UtcNow.ToJson()}] [Error] {message}");
-            Instance.output.Flush();
-        }
+    //public class Log
+    //{
+    //    internal static void Error(string message) => CoinbaseUtils.Log.Error(message);
+    //    internal static void Information(string message) => CoinbaseUtils.Log.Information(message);
+    //}
 
-        internal static void Information(string message)
-        {
-            Instance.output.WriteLine($"[{DateTime.UtcNow.ToJson()}] [Info] {message}");
-            Instance.output.Flush();
-        }
-    }
     public class WebSocketFeedLogger
     {
 

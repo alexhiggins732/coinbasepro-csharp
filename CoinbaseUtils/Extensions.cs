@@ -1,11 +1,13 @@
 ﻿using CoinbasePro.Services.Orders;
 using CoinbasePro.Services.Orders.Models.Responses;
+using CoinbasePro.Services.Products.Models;
 using CoinbasePro.Shared.Types;
 using CoinbasePro.WebSocket.Models.Response;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO.Ports;
 using System.Linq;
 using System.Runtime.Serialization;
 
@@ -135,6 +137,10 @@ namespace CoinbaseUtils
 
         }
         public static string ToCurrency(this decimal value) => value.ToCurrency(Currency.USD);
+
+        public static string ToCurrency(this decimal value, Product product)
+            => ToPrecision(value, product.QuoteIncrement).ToString();
+
         public static string ToCurrency(this decimal value, Currency currency)
         {
 
@@ -151,7 +157,7 @@ namespace CoinbaseUtils
         public static string ToCurrency(this decimal value, ProductType productType)
         {
             var pair = new CurrencyPair(productType);
-
+    
             var defaultPrecision = 2;
             int precision = defaultPrecision;
             switch (productType)
@@ -182,6 +188,10 @@ namespace CoinbaseUtils
         public static int Precision(this decimal value)
         {
             return value.ToString().Trim('0').Split('.')[1].Length;
+        }
+        public static int GetPrecision(this decimal value)
+        {
+            return value.ToString().Trim('0').Split('.')[1].TrimEnd(new[] { '0' }).Length;
         }
         public static string ToDebugString(this CoinbasePro.Services.Orders.Models.Responses.OrderResponse x)
         {

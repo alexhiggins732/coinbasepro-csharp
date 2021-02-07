@@ -29,17 +29,30 @@ namespace CoinbasePro.Services
             string uri,
             string content = null)
         {
+            int retryTimeout = 100;
+            retry:
             var httpRequestMessage = content == null
                 ? httpRequestMessageService.CreateHttpRequestMessage(httpMethod, uri)
                 : httpRequestMessageService.CreateHttpRequestMessage(httpMethod, uri, content);
 
             var httpResponseMessage = await httpClient.SendAsync(httpRequestMessage).ConfigureAwait(false);
-
+           
             if (httpResponseMessage.IsSuccessStatusCode)
             {
                 Log.Verbose("@httpResponseMessage", httpResponseMessage);
 
                 return httpResponseMessage;
+            }
+            else
+            {
+                if ((int)httpResponseMessage.StatusCode == 429)
+                {
+                    System.Threading.Thread.Sleep(retryTimeout);
+                    retryTimeout <<= 1;
+                    goto retry;
+
+                }
+                string bp = "";
             }
 
             var contentBody = await httpClient.ReadAsStringAsync(httpResponseMessage).ConfigureAwait(false);
@@ -126,8 +139,10 @@ namespace CoinbasePro.Services
                 var page = JsonConfig.DeserializeObject<IList<T>>(subsequentContentBody);
 
                 pagedList.Add(page);
-
+                
                 runCount--;
+                if (runCount > 1)
+                    System.Threading.Thread.Sleep(1000);
             }
 
             return pagedList;

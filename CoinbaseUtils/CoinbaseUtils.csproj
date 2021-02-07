@@ -134,6 +134,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Accounting.cs" />
     <Compile Include="AccountService.cs" />
     <Compile Include="Candles.cs" />
     <Compile Include="CandleService.cs" />
@@ -158,7 +159,7 @@
     <Compile Include="Extensions.cs" />
     <Compile Include="FillManager.cs" />
     <Compile Include="Orderbook.cs" />
-    <Compile Include="OrderManager.cs" />
+    <Compile Include="OrdersService.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
