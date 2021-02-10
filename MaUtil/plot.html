@@ -1,0 +1,57 @@
+<html>
+<head>
+ <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+<script>
+	var z_data =
+[
+	[0,1,2,3],
+	[0,1,2,3],
+	[0,1,2,3],
+	[0,.1,.2,.3],
+	[0,.1,.2,.3]
+]
+</script>
+ <script id="plotsrc" src="LtcUsd-Hour1-625-01012020-MaAgent20210208_1953.json"></script>
+
+<script>
+	var zLen= z_data.length;
+	var yLen = z_data[0].length;
+	var filter=3.5;
+	for(var x=0; x< zLen;x++)
+	{
+		for(var y=0;y<yLen;y++)
+		{
+			z_data[x][y]= z_data[x][y]<filter?0:z_data[x][y];
+		}
+	}
+</script>
+</head>
+<body>
+	<div id="myDiv"></div>
+
+<script>
+var data= 
+	[
+		{
+			z: z_data,
+			type:"surface"
+		}
+	];
+var layout=
+{
+	title:'Ma profits',
+	autosize:true,
+	width:1200,
+	height:800,
+	margin:{
+		l:65,
+		r:50,
+		b:65,
+		t:90
+	}
+};
+Plotly.newPlot('myDiv', data, layout);
+</script>
+</body>
+</html>
