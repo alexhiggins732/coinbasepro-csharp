@@ -246,6 +246,10 @@ namespace CoinbaseConsole
                 commandActions.AddRange(ParseCancellationOptions(arguments));
                 //cancel all, cancel buys, cancel sells, cancel all buys, cancel all sells
             }
+            else if (arg0 == "cls")
+            {
+                commandActions.Add(() => Console.Clear());
+            }
             else if (arg0 == "fees")
             {
                 commandActions.AddRange(ParseFeeOptions(arguments));
@@ -265,6 +269,10 @@ namespace CoinbaseConsole
                     var ticker = GetProductTicker(product);
                     commandActions.Add(() => Console.WriteLine($"\t{product.ToString().PadRight(9, ' ')}Last\t{ticker.Price.ToString().PadRight(11, ' ')}Bid\t{ticker.Bid.ToString().PadRight(11, ' ')}Ask\t{ticker.Ask.ToString().PadRight(11, ' ')}"));
                 });
+            }
+            else if (arg0 == "stop")
+            {
+                commandActions.AddRange(ParseStopOptions(arguments));
             }
             else if (arg0 == "ticker")
             {
@@ -353,6 +361,371 @@ namespace CoinbaseConsole
                 result.Add(arguments.InvalidAction());
             }
             return result;
+        }
+
+        private class StopOptions
+        {
+            private ProductType _productType;
+            public ProductType ProductType
+            {
+                get { return _productType; }
+                set
+                {
+                    _productType = value;
+                    Product = OrdersService.GetProduct(ProductType);
+                }
+            }
+            public OrderSide OrderSide;
+
+            private decimal price;
+            public decimal Price
+            {
+                get => price;
+                set { price = value; if (StartPrice == 0) { StartPrice = value; } }
+            }
+            public bool Active;
+            public decimal TrailingStopPct;
+            public Product Product;
+            public CoinbaseTicker Ticker { get; internal set; }
+
+            public EventHandler OnCompleted;
+            ConsoleDriver Driver;
+            public StopOptions(ConsoleDriver driver)
+            {
+                Active = true;
+                Driver = driver;
+            }
+
+            public override string ToString()
+            {
+                if (OrderSide == OrderSide.Buy)
+                {
+                    var target = StartPrice * (1 - TrailingStopPct * TargetMult);
+                    var trigger = StartPrice * (1 - TrailingStopPct * TriggerMult);
+                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
+                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
+                    return $"{ProductType} {OrderSide} {Price} Trail: {TrailingStopPct.ToString("P")} (next {targetRounded} @ {triggerRounded})";
+                }
+                else
+                {
+                    var target = StartPrice * (1 + TrailingStopPct * TargetMult);
+                    var trigger = StartPrice * (1 + TrailingStopPct * TriggerMult);
+                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
+                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
+                    return $"{ProductType} {OrderSide} {Price} Trail: {TrailingStopPct.ToString("P")} (next {targetRounded} @ {triggerRounded})";
+                }
+            }
+
+            internal void On_BuyTickerReceived(object sender, WebfeedEventArgs<Ticker> e)
+            {
+                var lastPrice = e.LastOrder.Price;
+                if (e.LastOrder.Price > Price)
+                {
+                    Complete();
+                    Console.WriteLine($"[{DateTime.Now}] Stop buy hit for {ProductType}. Refreshing orders");
+                    OrderManager.Refresh();
+
+                    OrdersService.CancelAllOrders(x => x.ProductId == ProductType && x.Side == OrderSide.Buy);
+                    //var product = OrdersService.GetProduct(ProductType);
+                    var svc = new AccountService();
+                    var balance = svc.GetBalance(Product.QuoteCurrency);
+                    var roundedBalance = balance.ToPrecision(Product.QuoteIncrement);
+                    var order = OrdersService.CreateMarketBuyOrder(ProductType, roundedBalance);
+
+                    var result = OrdersService.PlaceMarketBuyOrder(order);
+                    Active = false;
+                    if (doCallBack)
+                    {
+                        decimal callBackAmount = e.LastOrder.Price * (1 - (TrailingStopPct * 2));
+                        var roundedCallBackAmount = callBackAmount.ToPrecision(Product.QuoteIncrement);
+                        string callBack = $"stop {ProductType} sell {roundedCallBackAmount} {TrailingStopPct}";
+                        Console.WriteLine($"Stop callback: {callBack}");
+                        Thread.Sleep(500);
+                        Driver.ParseArguments(callBack);
+                    }
+
+
+                }
+                else if (TrailingStopPct > 0m)
+                {
+                    var current = Price;
+                    var currStop = StartPrice * (1 - (TrailingStopPct * (TargetMult + 1)));
+                    var target = StartPrice * (1 - TrailingStopPct * TargetMult);
+                    var trigger = StartPrice * (1 - TrailingStopPct * TriggerMult);
+                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
+                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
+                    while (lastPrice < triggerRounded)
+                    {
+                        Price = targetRounded;
+                        TargetMult++;
+                        TriggerMult++;
+                        target = StartPrice * (1 - TrailingStopPct * TargetMult);
+                        trigger = StartPrice * (1 - TrailingStopPct * TriggerMult);
+                        targetRounded = target.ToPrecision(Product.QuoteIncrement);
+                        triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
+                        Console.WriteLine($"[{DateTime.Now}] Decreasing trailing buy to {Price} (next {targetRounded} @ {triggerRounded}): {this}");
+                        //Console.WriteLine($"[{DateTime.Now}]  => Next to { StartPrice *(1 + TrailingStopPct * targetMult)} (Trigger:{StartPrice * (1 + TrailingStopPct * triggerMult)}): {this}");
+
+                    }
+                }
+            }
+            public int TriggerMult = 2;
+            public int TargetMult = 1;
+            private decimal _startPrice;
+            bool doCallBack = true;
+            public decimal StartPrice
+            {
+                get => _startPrice;
+                set => Price = _startPrice = value;
+            }
+
+            internal void On_SellTickerReceived(object sender, WebfeedEventArgs<Ticker> e)
+            {
+                var lastPrice = e.LastOrder.Price;
+                if (e.LastOrder.Price < Price)
+                {
+                    Complete();
+                    Console.WriteLine($"[{DateTime.Now}] Stop sell hit for {ProductType}. Refreshing orders");
+                    OrderManager.Refresh();
+
+                    OrdersService.CancelAllOrders(x => x.ProductId == ProductType && x.Side == OrderSide.Sell);
+                    //var product = OrdersService.GetProduct(ProductType);
+                    var svc = new AccountService();
+                    var balance = svc.GetBalance(Product.BaseCurrency);
+                    var roundedBalance = balance.ToPrecision(Product.BaseIncrement);
+                    var order = OrdersService.CreateMarketSellOrder(ProductType, roundedBalance);
+
+                    var result = OrdersService.PlaceMarketSellOrder(order);
+                    Active = false;
+
+                    if (doCallBack)
+                    {
+                        decimal callBackAmount = e.LastOrder.Price * (1 + (TrailingStopPct*2));
+                        var roundedCallBackAmount = callBackAmount.ToPrecision(Product.QuoteIncrement);
+                        string callBack = $"stop {ProductType} buy {roundedCallBackAmount} {TrailingStopPct}";
+                        Console.WriteLine($"Stop callback: {callBack}");
+                        Thread.Sleep(500);
+                        Driver.ParseArguments(callBack);
+                    }
+
+
+                }
+                else if (TrailingStopPct > 0m)
+                {
+                    var current = Price;
+                    var currStop = StartPrice * (1 + (TrailingStopPct * (TargetMult - 1)));
+                    var target = StartPrice * (1 + TrailingStopPct * TargetMult);
+                    var trigger = StartPrice * (1 + TrailingStopPct * TriggerMult);
+                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
+                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
+                    while (lastPrice > triggerRounded)
+                    {
+                        Price = targetRounded;
+                        TargetMult++;
+                        TriggerMult++;
+                        target = StartPrice * (1 + TrailingStopPct * TargetMult);
+                        trigger = StartPrice * (1 + TrailingStopPct * TriggerMult);
+                        targetRounded = target.ToPrecision(Product.QuoteIncrement);
+                        triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
+                        Console.WriteLine($"[{DateTime.Now}] Increasing trailing sell to {Price} (next {targetRounded} @ {triggerRounded}): {this}");
+                        //Console.WriteLine($"[{DateTime.Now}]  => Next to { StartPrice *(1 + TrailingStopPct * targetMult)} (Trigger:{StartPrice * (1 + TrailingStopPct * triggerMult)}): {this}");
+
+                    }
+                }
+            }
+            internal void Complete()
+            {
+                Ticker.OnTickerReceived -= On_SellTickerReceived;
+                Ticker.OnTickerReceived -= On_BuyTickerReceived;
+                Ticker.Stop();
+                this.OnCompleted?.Invoke(this, null);
+                this.OnCompleted?.GetInvocationList().ToList().ForEach(x =>
+                {
+                    this.OnCompleted -= (EventHandler)x;
+                });
+            }
+        }
+
+        private Dictionary<ProductType, List<StopOptions>> stopOptions = new Dictionary<ProductType, List<StopOptions>>();
+
+        private void CancelStop(ProductType productType)
+        {
+            if (stopOptions.ContainsKey(productType) && stopOptions[productType].Count > 0)
+            {
+
+                var opts = stopOptions[productType];
+                Console.WriteLine($"Canceling {opts.Count} for {productType}");
+
+                foreach (var opt in opts.ToList())
+                {
+
+                    Console.WriteLine($"{tabbracket}Canceled stop option: {opt}");
+                    opt.Complete();
+                    opt.Ticker.OnTickerReceived -= opt.On_BuyTickerReceived;
+                    opt.Ticker.OnTickerReceived -= opt.On_SellTickerReceived;
+                    opt.Ticker.Stop();
+                }
+                opts.Clear();
+                stopOptions.Remove(productType);
+
+            }
+            else
+            {
+                Console.WriteLine($"No stops to cancel for {productType}");
+            }
+        }
+        private IEnumerable<Action> ParseStopOptions(ArgumentList arguments)
+        {
+            string usage = " Usage: stop [producttype] (buy|sell|cancel|list) [price] [trailing %]";
+            var i = 1;
+            List<Action> actions = new List<Action>();
+            if (arguments.Length > 1)
+            {
+                var options = new StopOptions(this);
+                bool parsedProduct = false;
+                if (arguments[i].ParseEnum<ProductType>(out ProductType productType))
+                {
+                    parsedProduct = true;
+                    i++;
+                }
+                else
+                {
+                    productType = ProductType;
+                }
+                options.ProductType = productType;
+
+                if (i >= arguments.Length)
+                {
+                    actions.Add(arguments.InvalidAction($"{tabbracket} {usage}"));
+                    return actions;
+                }
+                switch (arguments[i++].ToLower())
+                {
+                    case "buy":
+
+                        options.OrderSide = OrderSide.Buy;
+                        break;
+                    case "sell":
+                        options.OrderSide = OrderSide.Sell;
+                        break;
+                    case "list":
+                        if (parsedProduct)
+                        {
+                            if (stopOptions.ContainsKey(productType))
+                            {
+                                var l = stopOptions[ProductType];
+                                if (l.Count == 0)
+                                {
+                                    actions.Add(() => Console.WriteLine($"{tabbracket}No stops for {productType}."));
+                                }
+                                else
+                                {
+                                    l.ForEach(x => actions.Add(() => Console.WriteLine($"{tabbracket}{x}")));
+                                }
+                            }
+                            else
+                            {
+                                actions.Add(() => Console.WriteLine($"{tabbracket}No stops for {productType}."));
+                            }
+                        }
+                        else
+                        {
+                            foreach (var kvp in stopOptions)
+                            {
+                                actions.Add(() => Console.WriteLine($"{tabbracket}{kvp.Key}:"));
+                                if (kvp.Value.Count == 0)
+                                {
+                                    actions.Add(() => Console.WriteLine($"{tabbracket}{tabbracket}No stops for {productType}."));
+                                }
+                                else
+                                {
+                                    kvp.Value.ForEach(x => actions.Add(() => Console.WriteLine($"{tab}{tabbracket}{x}")));
+                                }
+                            }
+                        }
+
+                        break;
+                    case "cancel":
+                        actions.Add(() => CancelStop(productType));
+                        break;
+                    default:
+                        actions.Add(arguments.InvalidAction($"{tabbracket}{usage}"));
+                        break;
+
+                }
+                decimal optionPrice = 0m;
+                if (actions.Count == 0)
+                {
+                    if (i < arguments.Length && arguments[i].ParseDecimal(out optionPrice))
+                    {
+
+                    }
+                    else
+                    {
+                        actions.Add(arguments.InvalidAction($"{tabbracket}Unable to parse Price: {usage}"));
+                    }
+                }
+                decimal stopPct = 0;
+                if (actions.Count == 0)
+                {
+                    if (++i < arguments.Length)
+                    {
+                        if (arguments[i].IndexOf("%") > -1 && arguments[i].TryParsePercent(out stopPct))
+                        {
+                            string bp = $"PCT = {stopPct.ToString("P")}";
+                        }
+                        else if (arguments[i].ParseDecimal(out stopPct))
+                        {
+                            string bp = $"PCT = {stopPct.ToString("P")}";
+                        }
+                        else
+                        {
+                            actions.Add(arguments.InvalidAction($"{tabbracket}Unable to parse trailing stop %. {usage}"));
+                        }
+                    }
+                }
+                if (actions.Count == 0)
+                {
+                    CancelStop(productType);
+                    options.Price = optionPrice;
+                    options.Ticker = CoinbaseTicker.Create(productType);
+                    options.TrailingStopPct = stopPct;
+
+                    if (options.OrderSide == OrderSide.Buy)
+                    {
+                        options.Ticker.OnTickerReceived += options.On_BuyTickerReceived;
+                    }
+                    else
+                    {
+                        options.Ticker.OnTickerReceived += options.On_SellTickerReceived;
+                    }
+                    if (!stopOptions.ContainsKey(productType))
+                    {
+                        stopOptions[productType] = new List<StopOptions>();
+                    }
+                    stopOptions[productType].Add(options);
+                    options.OnCompleted += (sender, e) =>
+                    {
+                        if (stopOptions.ContainsKey(options.ProductType))
+                        {
+                            stopOptions[options.ProductType].Remove(options);
+                        }
+
+                    };
+                    actions.Add(() => Console.WriteLine($"Created stop: {options}"));
+
+
+                }
+
+
+            }
+            else
+            {
+                actions.Add(arguments.InvalidAction($"{tabbracket}{usage}"));
+            }
+
+
+            return actions;
         }
 
         private IEnumerable<Action> ParseMatchQueueOptions(ArgumentList arguments)
@@ -927,7 +1300,10 @@ namespace CoinbaseConsole
                             //fills = fillsLists[++page];
                             //fillIndex = 0;
                         }
-                        var fill = fills[fillIndex++];
+                        fillIndex++;
+                        if (fillIndex >= fills.Count)
+                            break;
+                        var fill = fills[fillIndex];
                         fifo.Add(fill);
                         if (fill.Side == OrderSide.Buy)
                         {
@@ -1149,125 +1525,134 @@ namespace CoinbaseConsole
             }
             else
             {
-                switch (arguments.parts[idx++])
+                if (idx + 1 >= arguments.Length)
                 {
-                    case "sell":
-                        options.OrderSide = OrderSide.Sell;
-                        break;
-                    case "buy":
-                        //spread buy [options] => start price, order size, increment, [max]               
-                        options.OrderSide = OrderSide.Buy;
-                        break;
-                    default:
-                        result.Add(arguments.InvalidAction($"Unable to parse {nameof(OrderSide)}"));
-                        break;
-                }
-
-                //TODO: Bug - Only parse strings not numbers: eg, 55 gets parsed as ProductType.AlgoGBP
-                if (bool.Parse(bool.FalseString) && idx < arguments.Length && Enum.TryParse<ProductType>(arguments.parts[idx], out ProductType productType))
-                {
-                    idx++;
-                    options.ProductType = productType;
+                    result.Add(arguments.InvalidAction());
                 }
                 else
                 {
-                    productType = options.ProductType = ProductType;
-                }
 
-                if (idx < arguments.Length && arguments.line.Contains("%"))
-                {
-                    // see if there is a start order size
 
-                    if (!arguments[idx].Contains("%"))
+                    switch (arguments.parts[idx++])
                     {
-                        if (arguments[idx++].ParseDecimal(out decimal startPrice))
-                        {
-                            options.StartPrice = startPrice;
-                        }
-                        else
-                        {
-                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(options.StartPrice)}: {arguments.line}"));
-                        }
-                    }
-                    else// start price not specified, use ticker
-                    {
-                        var ticker = GetProductTicker(productType);
-                        if (options.OrderSide == OrderSide.Buy)
-                        {
-                            options.StartPrice = ticker.Bid;
-                        }
-                        else
-                        {
-                            options.StartPrice = ticker.Ask;
-                        }
+                        case "sell":
+                            options.OrderSide = OrderSide.Sell;
+                            break;
+                        case "buy":
+                            //spread buy [options] => start price, order size, increment, [max]               
+                            options.OrderSide = OrderSide.Buy;
+                            break;
+                        default:
+                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(OrderSide)}"));
+                            break;
                     }
 
-                    if (!arguments[idx++].ParseDecimal(out decimal spreadPct))
+                    //TODO: Bug - Only parse strings not numbers: eg, 55 gets parsed as ProductType.AlgoGBP
+                    if (bool.Parse(bool.FalseString) && idx < arguments.Length && Enum.TryParse<ProductType>(arguments.parts[idx], out ProductType productType))
                     {
-                        result.Add(arguments.InvalidAction($"Unable to parse {nameof(spreadPct)}: {arguments.line}"));
+                        idx++;
+                        options.ProductType = productType;
                     }
                     else
                     {
-                        options.SpreadTotalPCT = spreadPct;
-                        if (!arguments[idx++].ParseDecimal(out decimal spreadOrderSize))
-                        {
-                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(spreadOrderSize)}: {arguments.line}"));
-                        }
-                        else
-                        {
-                            options.OrderPctSize = spreadOrderSize;
-                            // spread [buy|sell]  [startPrice] [SpreadPct] [OrderPCT]
-                            if (idx == arguments.Length)
-                            {
-                                options.TotalAmount = AccountService.GetAccountBalance(productType, options.OrderSide);
-                            }
-                            else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderMax))
-                            {
-                                options.TotalAmount = orderMax;
-                            }
-                            else
-                            {
-                                result.Add(arguments.InvalidAction($"Unable to parse {nameof(orderMax)}: {arguments.line}"));
-                            }
-                        }
+                        productType = options.ProductType = ProductType;
                     }
 
-                }
-                else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal startPrice))
-                {
-                    options.StartPrice = startPrice;
-                    if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderSize))
+                    if (idx < arguments.Length && arguments.line.Contains("%"))
                     {
-                        options.OrderSize = orderSize;
-                        if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal increment))
+                        // see if there is a start order size
+
+                        if (!arguments[idx].Contains("%"))
                         {
-                            options.Increment = increment;
-                            if (idx == arguments.Length)
+                            if (arguments[idx++].ParseDecimal(out decimal startPrice))
                             {
-                                options.TotalAmount = AccountService.GetAccountBalance(productType, options.OrderSide);
-                            }
-                            else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderMax))
-                            {
-                                options.TotalAmount = orderMax;
+                                options.StartPrice = startPrice;
                             }
                             else
                             {
-                                result.Add(arguments.InvalidAction($"Unable to parse {nameof(orderMax)}: {arguments.line}"));
+                                result.Add(arguments.InvalidAction($"Unable to parse {nameof(options.StartPrice)}: {arguments.line}"));
+                            }
+                        }
+                        else// start price not specified, use ticker
+                        {
+                            var ticker = GetProductTicker(productType);
+                            if (options.OrderSide == OrderSide.Buy)
+                            {
+                                options.StartPrice = ticker.Bid;
+                            }
+                            else
+                            {
+                                options.StartPrice = ticker.Ask;
+                            }
+                        }
+
+                        if (!arguments[idx++].ParseDecimal(out decimal spreadPct))
+                        {
+                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(spreadPct)}: {arguments.line}"));
+                        }
+                        else
+                        {
+                            options.SpreadTotalPCT = spreadPct;
+                            if (!arguments[idx++].ParseDecimal(out decimal spreadOrderSize))
+                            {
+                                result.Add(arguments.InvalidAction($"Unable to parse {nameof(spreadOrderSize)}: {arguments.line}"));
+                            }
+                            else
+                            {
+                                options.OrderPctSize = spreadOrderSize;
+                                // spread [buy|sell]  [startPrice] [SpreadPct] [OrderPCT]
+                                if (idx == arguments.Length)
+                                {
+                                    options.TotalAmount = AccountService.GetAccountBalance(productType, options.OrderSide);
+                                }
+                                else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderMax))
+                                {
+                                    options.TotalAmount = orderMax;
+                                }
+                                else
+                                {
+                                    result.Add(arguments.InvalidAction($"Unable to parse {nameof(orderMax)}: {arguments.line}"));
+                                }
+                            }
+                        }
+
+                    }
+                    else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal startPrice))
+                    {
+                        options.StartPrice = startPrice;
+                        if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderSize))
+                        {
+                            options.OrderSize = orderSize;
+                            if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal increment))
+                            {
+                                options.Increment = increment;
+                                if (idx == arguments.Length)
+                                {
+                                    options.TotalAmount = AccountService.GetAccountBalance(productType, options.OrderSide);
+                                }
+                                else if (idx < arguments.Length && arguments[idx++].ParseDecimal(out decimal orderMax))
+                                {
+                                    options.TotalAmount = orderMax;
+                                }
+                                else
+                                {
+                                    result.Add(arguments.InvalidAction($"Unable to parse {nameof(orderMax)}: {arguments.line}"));
+                                }
+                            }
+                            else
+                            {
+                                result.Add(arguments.InvalidAction($"Unable to parse {nameof(increment)}: {arguments.line}"));
                             }
                         }
                         else
                         {
-                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(increment)}: {arguments.line}"));
+                            result.Add(arguments.InvalidAction($"Unable to parse {nameof(orderSize)}: {arguments.line}"));
                         }
                     }
                     else
                     {
-                        result.Add(arguments.InvalidAction($"Unable to parse {nameof(orderSize)}: {arguments.line}"));
+                        result.Add(arguments.InvalidAction($"Unable to parse {nameof(startPrice)}: {arguments.line}"));
                     }
-                }
-                else
-                {
-                    result.Add(arguments.InvalidAction($"Unable to parse {nameof(startPrice)}: {arguments.line}"));
                 }
             }
 

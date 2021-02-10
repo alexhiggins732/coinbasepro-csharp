@@ -130,6 +130,22 @@ namespace CoinbaseUtils
             return OrderHelper.CreatePostOnlyOrder(productType, orderSide, currentPrice, orderSize);
         }
 
+        public static TradeOrder CreateMarketSellOrder(ProductType productType, decimal orderSize, Guid? clientId = null)
+        {
+            var product = OrdersService.GetProduct(productType);
+            orderSize = orderSize.ToPrecision(product.BaseIncrement);
+            Log.Information($"Called {nameof(OrdersService)}.{nameof(CreatePostOnlyOrder)}");
+            return OrderHelper.CreateMarketOrder(productType, OrderSide.Sell, orderSize, clientId);
+        }
+        public static TradeOrder CreateMarketBuyOrder(ProductType productType, decimal orderSize, Guid? clientId = null)
+        {
+            var product = OrdersService.GetProduct(productType);
+            orderSize = orderSize.ToPrecision(product.QuoteIncrement);
+            Log.Information($"Called {nameof(OrdersService)}.{nameof(CreatePostOnlyOrder)}");
+            return OrderHelper.CreateMarketOrder(productType, OrderSide.Buy, orderSize, clientId);
+        }
+
+
         public static OrderResponse PlaceOrder(TradeOrder order)
         {
             Log.Information($"Called {nameof(OrdersService)}.{nameof(PlaceOrder)}");
@@ -172,18 +188,28 @@ namespace CoinbaseUtils
 
         public static OrderResponse PlaceMarketSellOrder(TradeOrder order)
         {
-            Log.Information($"Called {nameof(OrdersService)}.{nameof(PlaceMarketSellOrder)}");
-            var error = $"{nameof(OrdersService)}.{nameof(PlaceMarketSellOrder)} is not implemented";
-            Log.Error(error);
-            throw new NotImplementedException(error);
+            if (order.ClientId == null) order.ClientId = Guid.NewGuid();
+            var result = TryExecute(() =>
+                    service.client.OrdersService
+                    .PlaceMarketOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, MarketOrderAmountType.Size, order.ClientId)
+                    .Result);
+
+            Log.Information($"[{order.ClientId}] Placed: {result.ToDebugString()}");
+            return result;
+
         }
+
 
         public static OrderResponse PlaceMarketBuyOrder(TradeOrder order)
         {
-            Log.Information($"Called {nameof(OrdersService)}.{nameof(PlaceMarketBuyOrder)}");
-            var error = $"{nameof(OrdersService)}.{nameof(PlaceMarketBuyOrder)} is not implemented";
-            Log.Error(error);
-            throw new NotImplementedException(error);
+            if (order.ClientId == null) order.ClientId = Guid.NewGuid();
+            var result = TryExecute(() =>
+                    service.client.OrdersService
+                    .PlaceMarketOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, MarketOrderAmountType.Funds, order.ClientId)
+                    .Result);
+
+            Log.Information($"[{order.ClientId}] Placed: {result.ToDebugString()}");
+            return result;
         }
 
 
@@ -261,7 +287,7 @@ namespace CoinbaseUtils
             Log.Information($"Called {nameof(OrdersService)}.{nameof(PlaceLimitSellOrder)}: {order.ToJson()}");
             int tryCount = 0;
             int maxRetries = 3;
-            retryPlaceLimitSellOrder:
+        retryPlaceLimitSellOrder:
             var result = TryExecute(() =>
                  service.client.OrdersService
                  .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
@@ -298,7 +324,7 @@ namespace CoinbaseUtils
             Log.Information($"Called {nameof(OrdersService)}.{nameof(PlaceLimitBuyOrder)}: {order.ToJson()}");
             int tryCount = 0;
             int maxRetries = 3;
-            retryPlaceLimitBuyOrder:
+        retryPlaceLimitBuyOrder:
             var result = TryExecute(() =>
                 service.client.OrdersService
                 .PlaceLimitOrderAsync(order.OrderSide, order.ProductType, order.OrderSize, order.Price,
@@ -488,6 +514,11 @@ namespace CoinbaseUtils
             return new TradeOrder(productType, orderSide, price, orderSize, fee, feerate, totalAmount);
 
         }
+
+        internal static TradeOrder CreateMarketOrder(ProductType productType, OrderSide orderSide, decimal orderSize, Guid? clientId = null)
+        {
+            return new TradeOrder(productType, orderSide, orderSize, clientId);
+        }
     }
 
     public class TradeOrder
@@ -514,6 +545,14 @@ namespace CoinbaseUtils
             this.TotalAmount = totalAmount;
             this.ClientId = Guid.NewGuid();
         }
+        public TradeOrder(ProductType productType, OrderSide orderSide, decimal orderSize, Guid? clientId = null)
+        {
+            this.ProductType = productType;
+            this.OrderSide = orderSide;
+            this.OrderSize = orderSize;
+            this.ClientId = clientId ?? Guid.NewGuid();
+        }
+
 
 
         public override string ToString()
