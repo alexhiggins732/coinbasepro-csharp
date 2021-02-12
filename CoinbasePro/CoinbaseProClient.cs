@@ -9,9 +9,11 @@ using CoinbasePro.Services.Deposits;
 using CoinbasePro.Services.Fees;
 using CoinbasePro.Services.Fills;
 using CoinbasePro.Services.Fundings;
+using CoinbasePro.Services.Limits;
 using CoinbasePro.Services.Orders;
 using CoinbasePro.Services.Payments;
 using CoinbasePro.Services.Products;
+using CoinbasePro.Services.Profiles;
 using CoinbasePro.Services.Reports;
 using CoinbasePro.Services.StablecoinConversions;
 using CoinbasePro.Services.UserAccount;
@@ -52,16 +54,18 @@ namespace CoinbasePro
             CoinbaseAccountsService = new CoinbaseAccountsService(httpClient, httpRequestMessageService);
             OrdersService = new OrdersService(httpClient, httpRequestMessageService, queryBuilder);
             PaymentsService = new PaymentsService(httpClient, httpRequestMessageService);
-            WithdrawalsService = new WithdrawalsService(httpClient, httpRequestMessageService);
-            DepositsService = new DepositsService(httpClient, httpRequestMessageService);
+            WithdrawalsService = new WithdrawalsService(httpClient, httpRequestMessageService, queryBuilder);
+            DepositsService = new DepositsService(httpClient, httpRequestMessageService, queryBuilder);
             ProductsService = new ProductsService(httpClient, httpRequestMessageService, queryBuilder);
             CurrenciesService = new CurrenciesService(httpClient, httpRequestMessageService);
+            LimitsService = new LimitsService(httpClient, httpRequestMessageService);
             FillsService = new FillsService(httpClient, httpRequestMessageService);
             FundingsService = new FundingsService(httpClient, httpRequestMessageService, queryBuilder);
             ReportsService = new ReportsService(httpClient, httpRequestMessageService);
             UserAccountService = new UserAccountService(httpClient, httpRequestMessageService);
             StablecoinConversionsService = new StablecoinConversionsService(httpClient, httpRequestMessageService);
             FeesService = new FeesService(httpClient, httpRequestMessageService);
+            ProfilesService = new ProfilesService(httpClient, httpRequestMessageService);
             WebSocket = new WebSocket.WebSocket(createWebSocketFeed, authenticator, clock);
 
             Log.Information("CoinbaseProClient constructed");
@@ -85,6 +89,8 @@ namespace CoinbasePro
 
         public IFillsService FillsService { get; }
 
+        public ILimitsService LimitsService { get; }
+
         public IFundingsService FundingsService { get; }
 
         public IFeesService FeesService { get; }
@@ -94,6 +100,8 @@ namespace CoinbasePro
         public IUserAccountService UserAccountService { get; }
 
         public IStablecoinConversionsService StablecoinConversionsService { get; }
+
+        public IProfilesService ProfilesService { get; }
 
         public IWebSocket WebSocket { get; }
     }
