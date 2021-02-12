@@ -148,6 +148,7 @@
     <Compile Include="MatchQueue.cs" />
     <Compile Include="OrderSyncer.cs" />
     <Compile Include="OrderVolumeService.cs" />
+    <Compile Include="ProfitMeter.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="SocketServer.cs" />

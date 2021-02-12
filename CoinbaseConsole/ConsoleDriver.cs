@@ -58,9 +58,16 @@ namespace CoinbaseConsole
             this.ProductType = productType;
             Console.WriteLine($"{tabbracket}Set Product: {productType}");
             SetTicker(productType);
+            if (profitMeter != null)
+            {
+                profitMeter.Stop();
+                profitMeter = new ProfitMeter(this);
+            }
         }
 
         public Ticker LastTicker { get; private set; } = null;
+        public ProfitMeter profitMeter { get; private set; }
+
         private List<ProductType> ProductSubscriptions = null;
         void SetTicker(ProductType productType)
         {
@@ -143,7 +150,8 @@ namespace CoinbaseConsole
 
         private void Ticker_OnTickerReceived(object sender, WebfeedEventArgs<Ticker> e)
         {
-            Console.Title = FormatTicker(LastTicker = e.LastOrder);
+            if (this.profitMeter == null)
+                Console.Title = FormatTicker(LastTicker = e.LastOrder);
         }
 
         public WebSocketFeedLogger SocketLogger;
@@ -167,6 +175,8 @@ namespace CoinbaseConsole
 
             userFeed.OnOpenReceived += (sender, e) =>
             {
+                if (profitMeter != null && e.LastOrder.ProductId == profitMeter.ProductType)
+                    profitMeter.Side = e.LastOrder.Side;
                 string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 Console.WriteLine(message);
                 log.WriteLine(message);
@@ -174,6 +184,8 @@ namespace CoinbaseConsole
             };
             userFeed.OnReceivedReceived += (sender, e) =>
             {
+                if (profitMeter != null && e.LastOrder.ProductId == profitMeter.ProductType)
+                    profitMeter.Side = e.LastOrder.Side;
                 string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 log.WriteLine(message);
                 Console.WriteLine(message);
@@ -181,6 +193,20 @@ namespace CoinbaseConsole
             };
             userFeed.OnMatchReceived += (sender, e) =>
             {
+                if (profitMeter != null)
+                {
+                    profitMeter.LastPrice = e.LastOrder.Price;
+                    if (e.LastOrder.Side == OrderSide.Buy)
+                    {
+                        profitMeter.Side = OrderSide.Sell;
+                    }
+                    else
+                    {
+                        profitMeter.Side = OrderSide.Buy;
+                    }
+                }
+
+
                 var myOrder = OrderManager.TryGetByFirstIds(e.LastOrder.MakerOrderId, e.LastOrder.TakerOrderId);
                 string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
                 log.WriteLine(message);
@@ -245,6 +271,14 @@ namespace CoinbaseConsole
             {
                 commandActions.AddRange(ParseCancellationOptions(arguments));
                 //cancel all, cancel buys, cancel sells, cancel all buys, cancel all sells
+            }
+            else if (arg0 == "allin")
+            {
+                commandActions.Add(() => GoAllIn());
+            }
+            else if (arg0 == "dump")
+            {
+                commandActions.Add(() => Dump());
             }
             else if (arg0 == "cls")
             {
@@ -330,6 +364,10 @@ namespace CoinbaseConsole
             {
                 commandActions.Add((Action)(() => Console.WriteLine($"=> {string.Join(",", ProductSubscriptions)}")));
             }
+            else if (arg0 == "profitmeter")
+            {
+                commandActions.AddRange(ParseProfitMeterOptions(arguments));
+            }
             else
             {
                 commandActions.Add(arguments.InvalidAction());
@@ -339,6 +377,42 @@ namespace CoinbaseConsole
             return result;
 
         }
+        private IEnumerable<Action> ParseProfitMeterOptions(ArgumentList arguments)
+        {
+            var result = new List<Action>();
+            decimal lastPrice = 0m;
+            if (arguments.Length == 1 || (arguments.Length == 2 && arguments[1].ParseDecimal(out lastPrice)))
+            {
+                result.Add(() =>
+                {
+                    this.profitMeter = new ProfitMeter(this);
+                    if (lastPrice != 0)
+                    {
+                        this.profitMeter.LastPrice = lastPrice;
+                    }
+                });
+
+            }
+            else if (arguments.Length == 2 && arguments[1] == "stop")
+            {
+                result.Add(() =>
+                {
+                    this.profitMeter.Stop();
+                    this.profitMeter = null;
+                });
+            }
+            else if (arguments.Length == 2 && arguments[1].ParseEnum<OrderSide>(out OrderSide side))
+            {
+                profitMeter.Side = side;
+                result.Add(() => Console.WriteLine("Set Profit Meter Side."));
+            }
+            else
+            {
+                result.Add(arguments.InvalidAction("usage: profitmeter [stop]"));
+            }
+            return result;
+        }
+
         private IEnumerable<Action> ParseFeeOptions(ArgumentList arguments)
         {
             var service = new AccountService(true);
@@ -363,6 +437,59 @@ namespace CoinbaseConsole
             return result;
         }
 
+        private void Dump()
+        {
+            OrderManager.Refresh();
+
+            OrdersService.CancelAllOrders(x => x.ProductId == ProductType && x.Side == OrderSide.Sell);
+            var product = OrdersService.GetProduct(ProductType);
+            var svc = new AccountService();
+            var balance = svc.GetBalance(product.BaseCurrency);
+            var roundedBalance = balance.ToPrecision(product.BaseIncrement);
+            TradeOrder order = null;
+            if (arguments.Length == 2 && arguments[1] == "limit")
+            {
+                order = OrdersService.CreatePostOnlyOrder(ProductType, OrderSide.Sell, this.LastTicker.BestBid, roundedBalance);
+                Console.WriteLine($"Placing {ProductType} Sell Order: {order.ToJson()}");
+                var result = OrdersService.PlaceLimitSellOrder(order);
+            }
+
+            else
+            {
+                order = OrdersService.CreateMarketSellOrder(ProductType, roundedBalance);
+                Console.WriteLine($"Placing {ProductType} Sell Order: {order.ToJson()}");
+                var result = OrdersService.PlaceMarketSellOrder(order);
+            }
+        }
+
+
+
+        private void GoAllIn()
+        {
+            OrderManager.Refresh();
+            OrdersService.CancelAllOrders(x => x.ProductId == ProductType && x.Side == OrderSide.Buy);
+            var product = OrdersService.GetProduct(ProductType);
+            var svc = new AccountService();
+            var balance = svc.GetBalance(product.QuoteCurrency);
+            var roundedBalance = balance.ToPrecision(product.QuoteIncrement);
+            TradeOrder order = null;
+            OrderResponse result = null;
+            if (arguments.Length > 1 && arguments[1] == "limit")
+            {
+                var price = LastTicker.BestAsk;
+                order = OrdersService.CreatePostOnlyBuyOrder(ProductType, price, roundedBalance);
+                result = OrdersService.PlaceLimitBuyOrder(order);
+            }
+            else
+            {
+                order = OrdersService.CreateMarketBuyOrder(ProductType, roundedBalance);
+                result = OrdersService.PlaceMarketBuyOrder(order);
+            }
+            Console.WriteLine($"Placing {ProductType} Buy Order: {order.ToJson()}");
+
+        }
+
+
         private class StopOptions
         {
             private ProductType _productType;
@@ -383,6 +510,13 @@ namespace CoinbaseConsole
                 get => price;
                 set { price = value; if (StartPrice == 0) { StartPrice = value; } }
             }
+            private decimal _startPrice;
+            bool doCallBack = true;
+            public decimal StartPrice
+            {
+                get => _startPrice;
+                set => Price = _startPrice = value;
+            }
             public bool Active;
             public decimal TrailingStopPct;
             public Product Product;
@@ -390,6 +524,8 @@ namespace CoinbaseConsole
 
             public EventHandler OnCompleted;
             ConsoleDriver Driver;
+
+
             public StopOptions(ConsoleDriver driver)
             {
                 Active = true;
@@ -398,26 +534,12 @@ namespace CoinbaseConsole
 
             public override string ToString()
             {
-                if (OrderSide == OrderSide.Buy)
-                {
-                    var target = StartPrice * (1 - TrailingStopPct * TargetMult);
-                    var trigger = StartPrice * (1 - TrailingStopPct * TriggerMult);
-                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
-                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
-                    return $"{ProductType} {OrderSide} {Price} Trail: {TrailingStopPct.ToString("P")} (next {targetRounded} @ {triggerRounded})";
-                }
-                else
-                {
-                    var target = StartPrice * (1 + TrailingStopPct * TargetMult);
-                    var trigger = StartPrice * (1 + TrailingStopPct * TriggerMult);
-                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
-                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
-                    return $"{ProductType} {OrderSide} {Price} Trail: {TrailingStopPct.ToString("P")} (next {targetRounded} @ {triggerRounded})";
-                }
+                return $"{ProductType} {OrderSide} {Price} Trail: {TrailingStopPct.ToString("P")}";
             }
 
             internal void On_BuyTickerReceived(object sender, WebfeedEventArgs<Ticker> e)
             {
+                if (!Active) return;
                 var lastPrice = e.LastOrder.Price;
                 if (e.LastOrder.Price > Price)
                 {
@@ -434,9 +556,9 @@ namespace CoinbaseConsole
 
                     var result = OrdersService.PlaceMarketBuyOrder(order);
                     Active = false;
-                    if (doCallBack)
+                    if (doCallBack && bool.Parse(bool.FalseString))
                     {
-                        decimal callBackAmount = e.LastOrder.Price * (1 - (TrailingStopPct * 2));
+                        decimal callBackAmount = e.LastOrder.Price * (1 - (TrailingStopPct));
                         var roundedCallBackAmount = callBackAmount.ToPrecision(Product.QuoteIncrement);
                         string callBack = $"stop {ProductType} sell {roundedCallBackAmount} {TrailingStopPct}";
                         Console.WriteLine($"Stop callback: {callBack}");
@@ -448,39 +570,21 @@ namespace CoinbaseConsole
                 }
                 else if (TrailingStopPct > 0m)
                 {
-                    var current = Price;
-                    var currStop = StartPrice * (1 - (TrailingStopPct * (TargetMult + 1)));
-                    var target = StartPrice * (1 - TrailingStopPct * TargetMult);
-                    var trigger = StartPrice * (1 - TrailingStopPct * TriggerMult);
-                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
-                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
-                    while (lastPrice < triggerRounded)
+                    var calcLimit = e.LastOrder.Price * (1 + TrailingStopPct).ToPrecision(Product.QuoteIncrement);
+                    if (calcLimit < price)
                     {
-                        Price = targetRounded;
-                        TargetMult++;
-                        TriggerMult++;
-                        target = StartPrice * (1 - TrailingStopPct * TargetMult);
-                        trigger = StartPrice * (1 - TrailingStopPct * TriggerMult);
-                        targetRounded = target.ToPrecision(Product.QuoteIncrement);
-                        triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
-                        Console.WriteLine($"[{DateTime.Now}] Decreasing trailing buy to {Price} (next {targetRounded} @ {triggerRounded}): {this}");
-                        //Console.WriteLine($"[{DateTime.Now}]  => Next to { StartPrice *(1 + TrailingStopPct * targetMult)} (Trigger:{StartPrice * (1 + TrailingStopPct * triggerMult)}): {this}");
-
+                        Price = calcLimit;
+                        Console.WriteLine($"[{DateTime.Now}] {e.LastOrder.Price}: {this}");
                     }
+
                 }
             }
-            public int TriggerMult = 2;
-            public int TargetMult = 1;
-            private decimal _startPrice;
-            bool doCallBack = true;
-            public decimal StartPrice
-            {
-                get => _startPrice;
-                set => Price = _startPrice = value;
-            }
+
+
 
             internal void On_SellTickerReceived(object sender, WebfeedEventArgs<Ticker> e)
             {
+                if (!Active) return;
                 var lastPrice = e.LastOrder.Price;
                 if (e.LastOrder.Price < Price)
                 {
@@ -498,9 +602,9 @@ namespace CoinbaseConsole
                     var result = OrdersService.PlaceMarketSellOrder(order);
                     Active = false;
 
-                    if (doCallBack)
+                    if (doCallBack && bool.Parse(bool.FalseString))
                     {
-                        decimal callBackAmount = e.LastOrder.Price * (1 + (TrailingStopPct*2));
+                        decimal callBackAmount = e.LastOrder.Price * (1m + TrailingStopPct);
                         var roundedCallBackAmount = callBackAmount.ToPrecision(Product.QuoteIncrement);
                         string callBack = $"stop {ProductType} buy {roundedCallBackAmount} {TrailingStopPct}";
                         Console.WriteLine($"Stop callback: {callBack}");
@@ -512,29 +616,19 @@ namespace CoinbaseConsole
                 }
                 else if (TrailingStopPct > 0m)
                 {
-                    var current = Price;
-                    var currStop = StartPrice * (1 + (TrailingStopPct * (TargetMult - 1)));
-                    var target = StartPrice * (1 + TrailingStopPct * TargetMult);
-                    var trigger = StartPrice * (1 + TrailingStopPct * TriggerMult);
-                    var targetRounded = target.ToPrecision(Product.QuoteIncrement);
-                    var triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
-                    while (lastPrice > triggerRounded)
+                    var limitPct = 1m - TrailingStopPct;
+                    var calcLimitRaw = e.LastOrder.Price * limitPct;
+                    var calcLimit = calcLimitRaw.ToPrecision(Product.QuoteIncrement);
+                    if (calcLimit > price)
                     {
-                        Price = targetRounded;
-                        TargetMult++;
-                        TriggerMult++;
-                        target = StartPrice * (1 + TrailingStopPct * TargetMult);
-                        trigger = StartPrice * (1 + TrailingStopPct * TriggerMult);
-                        targetRounded = target.ToPrecision(Product.QuoteIncrement);
-                        triggerRounded = trigger.ToPrecision(Product.QuoteIncrement);
-                        Console.WriteLine($"[{DateTime.Now}] Increasing trailing sell to {Price} (next {targetRounded} @ {triggerRounded}): {this}");
-                        //Console.WriteLine($"[{DateTime.Now}]  => Next to { StartPrice *(1 + TrailingStopPct * targetMult)} (Trigger:{StartPrice * (1 + TrailingStopPct * triggerMult)}): {this}");
-
+                        Price = calcLimit;
+                        Console.WriteLine($"[{DateTime.Now}] {e.LastOrder.Price}: {this}");
                     }
                 }
             }
             internal void Complete()
             {
+                Active = false;
                 Ticker.OnTickerReceived -= On_SellTickerReceived;
                 Ticker.OnTickerReceived -= On_BuyTickerReceived;
                 Ticker.Stop();
@@ -895,7 +989,7 @@ namespace CoinbaseConsole
                            );
                 }
             }
-        Done:
+            Done:
             return result;
         }
 
@@ -967,8 +1061,8 @@ namespace CoinbaseConsole
                 // by runnint the done processor on a seperate delayed task.
                 Task.Run(() =>
                 {
-                    //int retryCount = 0;
-                    if (!OrderManager.AllOrders.ContainsKey(order.OrderId))
+                //int retryCount = 0;
+                if (!OrderManager.AllOrders.ContainsKey(order.OrderId))
                     {
                         string message = $"[{order.OrderId}] No existing order for done message";
                         Log.Information(message);
@@ -1437,8 +1531,8 @@ namespace CoinbaseConsole
                                 var filledSize = x.Sum(y => y.Value.FilledSize);
                                 var coinValue = ((totalSize - filledSize) * ticker.Price);
                                 totalValue += coinValue;
-                                //.ToPrecision(0.01m).ToString("C");
-                                var product = OrdersService.GetProduct(x.Key);
+                            //.ToPrecision(0.01m).ToString("C");
+                            var product = OrdersService.GetProduct(x.Key);
                                 var sellOrdersQty = (x.Sum(y => y.Value.Size) - x.Sum(y => y.Value.FilledSize));
                                 var sellOrdersValue = x.Sum(y => (y.Value.Size - y.Value.FilledSize) * y.Value.Price);
                                 var sellOrdersAveragePrice = sellOrdersValue / sellOrdersQty;
@@ -1756,6 +1850,7 @@ namespace CoinbaseConsole
             Console.WriteLine($"Invalid arguments: {line}");
         }
 
+        static ArgumentList arguments;
         private static ArgumentList ReadArgs(string line, out string arg0, out string arg1, out string arg2, out string arg3, out string arg4, out string arg5, out string arg6)
         {
             var parts = (line.ToLower() ?? "").Trim().Split(space, StringSplitOptions.RemoveEmptyEntries);
@@ -1774,7 +1869,9 @@ namespace CoinbaseConsole
                 arg4 = parts[idx++];
             if (parts.Length > idx)
                 arg5 = parts[idx++];
-            return new ArgumentList(line, parts, arg0, arg1, arg2, arg3, arg4, arg5, arg6);
+            arguments = new ArgumentList(line, parts, arg0, arg1, arg2, arg3, arg4, arg5, arg6);
+            return arguments;
+
         }
     }
 

@@ -129,6 +129,11 @@ namespace CoinbaseUtils
             Log.Information($"Called {nameof(OrdersService)}.{nameof(CreatePostOnlyOrder)}");
             return OrderHelper.CreatePostOnlyOrder(productType, orderSide, currentPrice, orderSize);
         }
+        public static TradeOrder CreatePostOnlyBuyOrder(ProductType productType, decimal currentPrice, decimal funds)
+        {
+            Log.Information($"Called {nameof(OrdersService)}.{nameof(CreatePostOnlyOrder)}");
+            return OrderHelper.CreatePostOnlyBuyOrder(productType, currentPrice, funds);
+        }
 
         public static TradeOrder CreateMarketSellOrder(ProductType productType, decimal orderSize, Guid? clientId = null)
         {
@@ -518,6 +523,20 @@ namespace CoinbaseUtils
         internal static TradeOrder CreateMarketOrder(ProductType productType, OrderSide orderSide, decimal orderSize, Guid? clientId = null)
         {
             return new TradeOrder(productType, orderSide, orderSize, clientId);
+        }
+
+        internal static TradeOrder CreatePostOnlyBuyOrder(ProductType productType, decimal price, decimal funds)
+        {
+            var service = new AccountService();
+            decimal feerate = service.MakerFeeRate;
+            var product = OrdersService.GetProduct(productType);
+            var orderFee = (funds * feerate).ToPrecision(product.QuoteIncrement);
+            var orderFunds = funds - orderFee;
+            var orderSize = (orderFunds / price).ToPrecision(product.BaseIncrement);
+            decimal total = price * orderSize;
+            decimal fee = orderFee;
+            var totalAmount = total + fee;
+            return new TradeOrder(productType, OrderSide.Buy, price, orderSize, fee, feerate, totalAmount);
         }
     }
 
