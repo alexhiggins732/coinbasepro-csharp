@@ -9,6 +9,7 @@ using CoinbasePro.Services.Deposits;
 using CoinbasePro.Services.Fees;
 using CoinbasePro.Services.Fills;
 using CoinbasePro.Services.Fundings;
+using CoinbasePro.Services.Limits;
 using CoinbasePro.Services.Orders;
 using CoinbasePro.Services.Payments;
 using CoinbasePro.Services.Products;
@@ -54,9 +55,10 @@ namespace CoinbasePro
             OrdersService = new OrdersService(httpClient, httpRequestMessageService, queryBuilder);
             PaymentsService = new PaymentsService(httpClient, httpRequestMessageService);
             WithdrawalsService = new WithdrawalsService(httpClient, httpRequestMessageService, queryBuilder);
-            DepositsService = new DepositsService(httpClient, httpRequestMessageService);
+            DepositsService = new DepositsService(httpClient, httpRequestMessageService, queryBuilder);
             ProductsService = new ProductsService(httpClient, httpRequestMessageService, queryBuilder);
             CurrenciesService = new CurrenciesService(httpClient, httpRequestMessageService);
+            LimitsService = new LimitsService(httpClient, httpRequestMessageService);
             FillsService = new FillsService(httpClient, httpRequestMessageService);
             FundingsService = new FundingsService(httpClient, httpRequestMessageService, queryBuilder);
             ReportsService = new ReportsService(httpClient, httpRequestMessageService);
@@ -86,6 +88,8 @@ namespace CoinbasePro
         public ICurrenciesService CurrenciesService { get; }
 
         public IFillsService FillsService { get; }
+
+        public ILimitsService LimitsService { get; }
 
         public IFundingsService FundingsService { get; }
 

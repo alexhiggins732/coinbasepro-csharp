@@ -1,6 +1,6 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net.Http;
 using System.Threading.Tasks;
 using CoinbasePro.Network.HttpClient;
@@ -36,8 +36,8 @@ namespace CoinbasePro.Services.Withdrawals
                 new KeyValuePair<string, string>("type", "withdraw"),
                 new KeyValuePair<string, string>("limit", limit.ToString()),
                 new KeyValuePair<string, string>("profile_id", profileId ?? string.Empty),
-                new KeyValuePair<string, string>("before", before.HasValue ? before.Value.ToString("yyyy-MM-dd") : string.Empty),
-                new KeyValuePair<string, string>("after", after.HasValue ? after.Value.ToString("yyyy-MM-dd") : string.Empty));
+                new KeyValuePair<string, string>("before", before.HasValue ? before.Value.ToString("s", CultureInfo.InvariantCulture) : string.Empty),
+                new KeyValuePair<string, string>("after", after.HasValue ? after.Value.ToString("s", CultureInfo.InvariantCulture) : string.Empty));
 
             return await SendServiceCall<IList<Transfer>>(HttpMethod.Get,
                 $"/transfers" + queryString).ConfigureAwait(false);
@@ -99,6 +99,17 @@ namespace CoinbasePro.Services.Withdrawals
             };
 
             return await SendServiceCall<CryptoResponse>(HttpMethod.Post, "/withdrawals/crypto", JsonConfig.SerializeObject(newCryptoWithdrawal)).ConfigureAwait(false);
+        }
+
+        public async Task<FeeEstimateResponse> GetFeeEstimateAsync(
+            Currency currency,
+            string cryptoAddress)
+        {
+            var queryString = queryBuilder.BuildQuery(
+               new KeyValuePair<string, string>("currency", currency.ToString()),
+               new KeyValuePair<string, string>("crypto_address", cryptoAddress));
+
+            return await SendServiceCall<FeeEstimateResponse>(HttpMethod.Get, "/withdrawals/fee-estimate" + queryString).ConfigureAwait(false);
         }
     }
 }
