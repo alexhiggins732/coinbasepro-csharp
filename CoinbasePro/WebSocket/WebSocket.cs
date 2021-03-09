@@ -68,7 +68,16 @@ namespace CoinbasePro.WebSocket
 
             this.productTypes = productTypes;
             this.channelTypes = channelTypes;
-
+            if(webSocketFeed != null)
+            {
+                
+                webSocketFeed.Closed -= WebSocket_Closed;
+                webSocketFeed.Error -= WebSocket_Error;
+                webSocketFeed.MessageReceived -= WebSocket_MessageReceived;
+                webSocketFeed.Opened -= WebSocket_Opened;
+                webSocketFeed.Stop();
+                webSocketFeed = null;
+            }
             webSocketFeed = createWebSocketFeed();
 
             if (autoSendPingInterval.HasValue && autoSendPingInterval >= 0)

@@ -106,6 +106,7 @@ namespace CoinbaseUtils
             => new ConcurrentDictionary<TKey, TValue>(data);
         public static bool ParseDecimal(this string value, out decimal result)
         {
+            value = value ?? "";
             var pctIdx = value.IndexOf("%");
             var dollarIdx = value.IndexOf("$");
             if (pctIdx == -1 && dollarIdx == -1)
@@ -136,6 +137,11 @@ namespace CoinbaseUtils
 
 
         }
+        public static bool ParseInt(this string value, out int result)
+        {
+            var parsed = int.TryParse(value, out result);
+            return parsed;
+        }
         public static string ToCurrency(this decimal value) => value.ToCurrency(Currency.USD);
 
         public static string ToCurrency(this decimal value, Product product)
@@ -143,8 +149,6 @@ namespace CoinbaseUtils
 
         public static string ToCurrency(this decimal value, Currency currency)
         {
-
-
             var defaultPrecision = 2;
             int precision = defaultPrecision;
             switch (currency)
@@ -155,28 +159,8 @@ namespace CoinbaseUtils
             return Math.Round(value, precision).ToString();
         }
         public static string ToCurrency(this decimal value, ProductType productType)
-        {
-            var pair = new CurrencyPair(productType);
-    
-            var defaultPrecision = 2;
-            int precision = defaultPrecision;
-            switch (productType)
-            {
-                case ProductType.BtcUsd:
-                case ProductType.BtcUsdc:
-                case ProductType.LtcUsd:
-                case ProductType.EthUsd:
-                case ProductType.EthUsdc:
-                case ProductType.DaiUsdc:
-                    precision = 8;
-                    break;
-                default:
-                    precision = 8;
-                    //throw new NotImplementedException("ToCurrency({productType})");
-                    break;
-            }
-            return Math.Round(value, precision).ToString();
-        }
+            => value.ToCurrency(OrdersService.GetProduct(productType));
+
         public static Decimal ToPrecision(this decimal value, decimal precision)
         {
             var mult = 1m / precision;
@@ -206,25 +190,111 @@ namespace CoinbaseUtils
 
         public static string ToDebugString(this Received x)
         {
-            return $"Received: {x.OrderId} {x.ProductId} {x.Side} {x.Size} @ {x.Price.ToCurrency(x.ProductId)} = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
+            var shortOrderId = x.OrderId.ToString().Split('-')[0];
+            return $"Received: {shortOrderId} {x.ProductId} {x.Side} {x.Size} @ {x.Price.ToCurrency(x.ProductId)} = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
         }
 
         public static string ToDebugString(this Done x)
         {
             var total = (x.Price * x.RemainingSize);
+            if (x.Price == 0 || x.RemainingSize == 0)
+            {
+                var svc = new CoinbaseService();
+                var fillsLists = svc.client.FillsService.GetFillsByOrderIdAsync(x.OrderId.ToString()).Result.SelectMany(d => d).ToList();
+                int retries = 4;
+                int sleep = 1000;
+                int attempt = 1;
+                while (fillsLists.Count == 0 && attempt <= retries)
+                {
+                    System.Threading.Thread.Sleep(sleep);
+                    fillsLists = svc.client.FillsService.GetFillsByOrderIdAsync(x.OrderId.ToString()).Result.SelectMany(d => d).ToList();
+
+                }
+                if (fillsLists.Count == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Failed to retrieve fills for order: {x.OrderId}");
+                    Console.ResetColor();
+                }
+                else
+                {
+                    var f = fillsLists.First();
+                    var side = f.Side;
+                    var qty = f.Size;
+                    var subtotal = f.Size * f.Price;
+                    var fee = f.Fee;
+                    int idx = 0;
+                    List<Guid> orderIds = new List<Guid>();
+                    var l = new List<CoinbasePro.Services.Fills.Models.Responses.FillResponse>();
+                    while (++idx < fillsLists.Count && fillsLists[idx].Side == f.Side)
+                    {
+                        f = fillsLists[idx];
+                        qty += f.Size;
+                        subtotal += (f.Size * f.Price);
+                        fee += f.Fee;
+                        l.Add(f);
+                        if (!orderIds.Contains(f.OrderId))
+                            orderIds.Add(f.OrderId);
+                    }
+
+                    total = subtotal;
+                    if (side == CoinbasePro.Services.Orders.Types.OrderSide.Buy)
+                    {
+                        var total2 = total + fee;
+                        var price2 = (total2) / qty;
+                        total = total2;
+                    }
+                    else
+                    {
+                        total -= fee;
+                    }
+                    var price = (total) / qty;
+                    x.Price = price;
+                    x.RemainingSize = qty;
+                }
+            }
+
             var totalCurr = total.ToCurrency(x.ProductId);
-            var result = $"Done: {x.OrderId} {x.ProductId} {x.Side} {x.Reason} @ {x.Price.ToCurrency(x.ProductId)} = ({totalCurr})";
-            if (total == 0m || totalCurr=="0" || totalCurr== "0.0000")
+            var shortOrderId = x.OrderId.ToString().Split('-')[0];
+            var result = $"Done: {shortOrderId} {x.ProductId} {x.Side} {x.Reason}  {x.RemainingSize} @ {x.Price.ToCurrency(x.ProductId)} = ({totalCurr})";
+            if (total == 0m || totalCurr == "0" || totalCurr == "0.0000")
             {
                 string bp = "WTF";
             }
-            Console.WriteLine($" internal=>  {result}");
+            //Console.WriteLine($" internal=>  {result}");
             return result;
         }
 
         public static string ToDebugString(this Match x)
         {
-            return $"Match: {x.ToJson()}";
+            var liquidity = x.TakerUserId == null ? "Limit" : "Market";
+            string side = "";
+            if (x.Side == CoinbasePro.Services.Orders.Types.OrderSide.Buy)
+            {
+                if (x.TakerUserId == null)//Market buy
+                {
+                    side = "Buy";
+                }
+                else
+                {
+                    side = "Sell"; // maker of limit sell
+                }
+            }
+            else
+            {
+                if (x.TakerUserId == null) // market sell
+                {
+                    side = "Sell";
+                }
+                else
+                {
+                    side = "Buy"; // limit buy
+                }
+            }
+            var total = x.Size * x.Price;
+            var result = $"Match: {x.ProductId} {liquidity} {side} - {x.Size} @ {x.Price} = {total.ToPrecision(0.000001m)}";
+            //return $"Match: {x.ToJson()}";
+            return result;
         }
 
         public static string ToDebugString(this LastMatch x)

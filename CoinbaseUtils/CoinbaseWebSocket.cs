@@ -16,7 +16,7 @@ namespace CoinbaseUtils
         {
             this.OnActivateReceived += CoinbaseWebSocket_OnActivateReceived;
             this.OnChangeReceived += CoinbaseWebSocket_OnChangeReceived;
-            this.OnDoneReceived += CoinbaseWebSocket_OnDoneReceived;
+            //this.OnDoneReceived += CoinbaseWebSocket_OnDoneReceived;
             this.OnErrorReceived += CoinbaseWebSocket_OnErrorReceived;
             this.OnHeartbeatReceived += CoinbaseWebSocket_OnHeartbeatReceived;
             this.OnLastMatchReceived += CoinbaseWebSocket_OnLastMatchReceived;

@@ -17,8 +17,13 @@ namespace CoinbasePro.Network.HttpClient
             HttpRequestMessage httpRequestMessage,
             CancellationToken cancellationToken)
         {
-                var result = await Client.SendAsync(httpRequestMessage, cancellationToken);
-                return result;
+            var result = await Client.SendAsync(httpRequestMessage, cancellationToken);
+            if (result.StatusCode != System.Net.HttpStatusCode.OK)
+            {
+                var r = await result.Content.ReadAsStringAsync();
+                //System.Console.WriteLine($"Error: {httpRequestMessage.RequestUri} {System.Environment.NewLine}\t{result.ReasonPhrase}: {r}");
+            }
+            return result;
         }
 
         public async Task<string> ReadAsStringAsync(HttpResponseMessage httpRequestMessage)

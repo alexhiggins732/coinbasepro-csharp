@@ -8,13 +8,14 @@ using System.Linq;
 
 namespace CoinbaseUtils
 {
-    public class CoinbaseTicker :IDisposable
+    public class CoinbaseTicker : IDisposable
     {
         public event EventHandler<WebfeedEventArgs<Ticker>> OnTickerReceived;
         private CoinbaseWebSocket Feed;
         public ProductType ProductType { get; }
         public CoinbaseTicker(ProductType productType)
         {
+            Stop();
             this.ProductType = ProductType;
             this.Feed = new CoinbaseWebSocket();
             Feed.OnTickerReceived += Feed_OnTickerReceived;
@@ -26,7 +27,7 @@ namespace CoinbaseUtils
         private void Feed_OnTickerReceived(object sender, CoinbasePro.WebSocket.Models.Response.WebfeedEventArgs<CoinbasePro.WebSocket.Models.Response.Ticker> e)
         {
             OnTickerReceived?.Invoke(sender, e);
-            
+
         }
 
         public static CoinbaseTicker Create(ProductType productType) => new CoinbaseTicker(productType);

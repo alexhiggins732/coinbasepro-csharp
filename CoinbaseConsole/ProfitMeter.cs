@@ -37,27 +37,35 @@ namespace CoinbaseConsole
 
         private void On_TickerReceived(object sender, WebfeedEventArgs<Ticker> e)
         {
+            Driver.LastTicker = e.LastOrder;
+            if (Driver.profitMeter != null && this != Driver.profitMeter)
+            {
+                this.Stop();
+                return;
+            }
             if (LastPrice == 0)
             {
                 LastPrice = e.LastOrder.Price;
             }
             else
             {
-                var diff = e.LastOrder.Price / LastPrice;
+                var profitPct = e.LastOrder.Price / LastPrice;
                 var ticker = e.LastOrder;
-                var net = diff;
-                var diffMinusFee = (diff - TakerFeeRate);
+                var net = profitPct;
+                var diffMinusFee = (profitPct - TakerFeeRate);
                 if (Side == OrderSide.Sell)
                 {
                     net = diffMinusFee - 1m;
                 }
                 else
                 {
-                    net = 1m - (diff + TakerFeeRate);
+                    net = 1m - (profitPct + TakerFeeRate);
                 }
                 var side = this.Side;
                 //System.Threading.Thread.Sleep(100);
-                Console.Title = $"{DateTime.Now}: {ProductType} ({Side}): {ticker.Price} ({ticker.BestBid}-{ticker.BestAsk}) Profit: {diff.ToString("P")} Net: {net.ToString("P")}";
+                var priceString = LastPrice.ToPrecision(0.0001m);
+                Console.Title = $"{DateTime.Now}: {ProductType} ({Side}): {ticker.Price} ({ticker.BestBid}-{ticker.BestAsk}) Profit: {profitPct.ToString("P")} Net: {net.ToString("P")} - Last: {priceString}";
+
             }
         }
         public void Stop()

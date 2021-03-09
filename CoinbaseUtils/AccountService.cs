@@ -88,6 +88,7 @@ namespace CoinbaseUtils
 
         public decimal GetBalance(Currency currency)
         {
+            if (currency == Currency.Unknown) return 0;
             Account account = Instance.AllAccounts[currency] = (new CoinbaseService().client.AccountsService.GetAccountByIdAsync(Instance.AllAccounts[currency].Id.ToString())).Result;
             return account.Available;
         }
