@@ -296,7 +296,7 @@ namespace CoinbaseUtils
 
         public static List<OrderResponse> GetAllOrders()
         {
-            Log.Information($"Called {nameof(OrdersService)}.{nameof(GetAllOrders)}");
+            //Log.Information($"Called {nameof(OrdersService)}.{nameof(GetAllOrders)}");
             var statusList = new[] { OrderStatus.Active, OrderStatus.Open, OrderStatus.Pending, };
             var orders = OrdersService.GetAllOrders(statusList);
             //var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync().Result);
@@ -313,6 +313,13 @@ namespace CoinbaseUtils
         public static List<OrderResponse> GetAllOrders(OrderStatus[] statusList)
         {
             Log.Information($"Called {nameof(OrdersService)}.{nameof(GetAllOrders)}({string.Join(", ", statusList)})");
+
+            if (!OrderManager.IsDirty)
+            {
+                Console.WriteLine($"[{DateTime.Now}] Retrieved All Orders From Cache");
+                return OrderManager.AllOrders.Values.ToList();
+            }
+
             var apiResult = TryExecute(() => service.client.OrdersService.GetAllOrdersAsync(statusList).Result);
             var result = apiResult?.SelectMany(lst => lst.Select(x => x)).ToList();
 
@@ -324,9 +331,21 @@ namespace CoinbaseUtils
         public static OrderResponse GetOrderById(string orderId)
         {
             Log.Information($"[{orderId}] Called {nameof(OrdersService)}.{nameof(GetOrderById)}({orderId})");
-            var result = TryExecute(() => service.client.OrdersService.GetOrderByIdAsync(orderId.ToString()).Result);
-            Log.Information($"[{orderId}] Result: {result.ToJson()}");
-            return result;
+            if (OrderManager.IsDirty)
+            {
+                OrderManager.Refresh();
+            }
+            if (OrderManager.AllOrders.ContainsKey(Guid.Parse(orderId)))
+            {
+                //Console.WriteLine($"[{DateTime.Now}] Retrieved Order From Cache {orderId}");
+                return OrderManager.AllOrders[Guid.Parse(orderId)];
+            }
+            else
+            {
+                var result = TryExecute(() => service.client.OrdersService.GetOrderByIdAsync(orderId.ToString()).Result);
+                Log.Information($"[{orderId}] Result: {result.ToJson()}");
+                return result;
+            }
 
         }
         private static Guid CancelOrderById(Guid orderId)
@@ -472,12 +491,53 @@ namespace CoinbaseUtils
         {
 
         }
+        public static void SetDirty()
+        {
+            var now = DateTime.Now;
+            if (now > DirtyDate)
+            {
+                DirtyDate = now;
+            }
+        }
+        public static bool IsDirty => DirtyDate > LastRefresh
+            || LastRefresh == DateTime.MinValue 
+            || DateTime.Now.Subtract(LastRefresh).TotalSeconds > 5;
+
+        public static DateTime DirtyDate;
+        private static bool isUpdating;
+        public static DateTime LastRefresh { get; private set; }
         public static void Refresh()
         {
-            var svc = new CoinbaseService();
-            var statusList = new[] { OrderStatus.Active, OrderStatus.Open, OrderStatus.Pending, };
-            var orders = OrdersService.GetAllOrders(statusList);
-            Update(orders);
+            if (IsDirty )
+            {
+                if (isUpdating)
+                {
+                    while (isUpdating) { System.Threading.Thread.Sleep(0100); }
+                    //Console.WriteLine($"[{DateTime.Now}] Order Manager - Refreshed on seperate thread {LastRefresh}");
+                    return;
+                }
+                while (DateTime.Now.Subtract(DirtyDate).Milliseconds < 250)
+                {
+                    System.Threading.Tasks.Task.Delay(DateTime.Now.Subtract(DirtyDate).Milliseconds).Wait();
+                }
+                isUpdating = true;
+                var svc = new CoinbaseService();
+                var statusList = new[] { OrderStatus.Active, OrderStatus.Open, OrderStatus.Pending, };
+                var orders = OrdersService.GetAllOrders(statusList);
+                Update(orders);
+                LastRefresh = DateTime.Now;
+                isUpdating = false;
+            }
+            else
+            {
+                if (isUpdating)
+                {
+                    while (isUpdating) { System.Threading.Thread.Sleep(0100); }
+                    //Console.WriteLine($"[{DateTime.Now}] Order Manager - Refreshed on seperate thread {LastRefresh}");
+                    return;
+                }
+                //Console.WriteLine($"[{DateTime.Now}] Order Manager - Using cache {LastRefresh}");
+            }
 
         }
 

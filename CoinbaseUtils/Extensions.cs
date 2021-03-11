@@ -181,7 +181,8 @@ namespace CoinbaseUtils
         {
             if (x == null)
                 return "Invalid order resposne;";
-            return $"{x.Id}: {x.Size} @ {x.Price.ToCurrency(x.ProductId)} ({x.FillFees.ToCurrency(x.ProductId)}) = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
+            var debugIdParts = x.Id.ToString().Split('-');
+            return $"{debugIdParts[debugIdParts.Length-1]}: {x.Size} @ {x.Price.ToCurrency(x.ProductId)} ({x.FillFees.ToCurrency(x.ProductId)}) = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
         }
         public static string ToDebugString(this Open x)
         {
@@ -194,63 +195,70 @@ namespace CoinbaseUtils
             return $"Received: {shortOrderId} {x.ProductId} {x.Side} {x.Size} @ {x.Price.ToCurrency(x.ProductId)} = ({(x.Price * x.Size).ToCurrency(x.ProductId)})";
         }
 
+        private static ConcurrentDictionary<Guid, Done> doneCache = new ConcurrentDictionary<Guid, Done>();
         public static string ToDebugString(this Done x)
         {
+
             var total = (x.Price * x.RemainingSize);
             if (x.Price == 0 || x.RemainingSize == 0)
             {
-                var svc = new CoinbaseService();
-                var fillsLists = svc.client.FillsService.GetFillsByOrderIdAsync(x.OrderId.ToString()).Result.SelectMany(d => d).ToList();
-                int retries = 4;
-                int sleep = 1000;
-                int attempt = 1;
-                while (fillsLists.Count == 0 && attempt <= retries)
+                if (!doneCache.ContainsKey(x.OrderId))
                 {
-                    System.Threading.Thread.Sleep(sleep);
-                    fillsLists = svc.client.FillsService.GetFillsByOrderIdAsync(x.OrderId.ToString()).Result.SelectMany(d => d).ToList();
-
-                }
-                if (fillsLists.Count == 0)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"Failed to retrieve fills for order: {x.OrderId}");
-                    Console.ResetColor();
-                }
-                else
-                {
-                    var f = fillsLists.First();
-                    var side = f.Side;
-                    var qty = f.Size;
-                    var subtotal = f.Size * f.Price;
-                    var fee = f.Fee;
-                    int idx = 0;
-                    List<Guid> orderIds = new List<Guid>();
-                    var l = new List<CoinbasePro.Services.Fills.Models.Responses.FillResponse>();
-                    while (++idx < fillsLists.Count && fillsLists[idx].Side == f.Side)
+                    doneCache.Clear();
+                    var svc = new CoinbaseService();
+                    var fillsLists = svc.client.FillsService.GetFillsByOrderIdAsync(x.OrderId.ToString()).Result.SelectMany(d => d).ToList();
+                    int retries = 4;
+                    int sleep = 1000;
+                    int attempt = 1;
+                    while (fillsLists.Count == 0 && attempt <= retries)
                     {
-                        f = fillsLists[idx];
-                        qty += f.Size;
-                        subtotal += (f.Size * f.Price);
-                        fee += f.Fee;
-                        l.Add(f);
-                        if (!orderIds.Contains(f.OrderId))
-                            orderIds.Add(f.OrderId);
+                        System.Threading.Thread.Sleep(sleep);
+                        fillsLists = svc.client.FillsService.GetFillsByOrderIdAsync(x.OrderId.ToString()).Result.SelectMany(d => d).ToList();
+                        sleep <<= 1;
                     }
-
-                    total = subtotal;
-                    if (side == CoinbasePro.Services.Orders.Types.OrderSide.Buy)
+                    if (fillsLists.Count == 0)
                     {
-                        var total2 = total + fee;
-                        var price2 = (total2) / qty;
-                        total = total2;
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"Failed to retrieve fills for order: {x.OrderId}");
+                        Console.ResetColor();
                     }
                     else
                     {
-                        total -= fee;
+                        var f = fillsLists.First();
+                        var side = f.Side;
+                        var qty = f.Size;
+                        var subtotal = f.Size * f.Price;
+                        var fee = f.Fee;
+                        int idx = 0;
+                        List<Guid> orderIds = new List<Guid>();
+                        var l = new List<CoinbasePro.Services.Fills.Models.Responses.FillResponse>();
+                        while (++idx < fillsLists.Count && fillsLists[idx].Side == f.Side)
+                        {
+                            f = fillsLists[idx];
+                            qty += f.Size;
+                            subtotal += (f.Size * f.Price);
+                            fee += f.Fee;
+                            l.Add(f);
+                            if (!orderIds.Contains(f.OrderId))
+                                orderIds.Add(f.OrderId);
+                        }
+
+                        total = subtotal;
+                        if (side == CoinbasePro.Services.Orders.Types.OrderSide.Buy)
+                        {
+                            var total2 = total + fee;
+                            var price2 = (total2) / qty;
+                            total = total2;
+                        }
+                        else
+                        {
+                            total -= fee;
+                        }
+                        var price = (total) / qty;
+                        x.Price = price;
+                        x.RemainingSize = qty;
                     }
-                    var price = (total) / qty;
-                    x.Price = price;
-                    x.RemainingSize = qty;
+                    doneCache.TryAdd(x.OrderId, x);
                 }
             }
 

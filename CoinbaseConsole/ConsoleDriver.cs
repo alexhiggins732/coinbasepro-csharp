@@ -219,6 +219,7 @@ namespace CoinbaseConsole
             {
                 openedOrders.Clear();
             }
+            OrderManager.SetDirty();
 
             //if (profitMeter != null && e.LastOrder.ProductId == profitMeter.ProductType)
             //    profitMeter.Side = e.LastOrder.Side;
@@ -242,6 +243,7 @@ namespace CoinbaseConsole
             {
                 recievedOrders.Clear();
             }
+            OrderManager.SetDirty();
             //if (profitMeter != null && e.LastOrder.ProductId == profitMeter.ProductType)
             //    profitMeter.Side = e.LastOrder.Side;
             string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
@@ -263,17 +265,15 @@ namespace CoinbaseConsole
             {
                 matchedOrders.Clear();
             }
-            if (profitMeter != null)
+            OrderManager.SetDirty();
+            FillsManager.MarkUpdated(ProductType);
+            if (profitMeter != null && e.LastOrder.ProductId == ProductType)
             {
                 var x = e.LastOrder;
+                TimedOptions options = null;
                 if (this.Session.ContainsKey(nameof(TimedOptions)))
                 {
-                    var options = this.Session[nameof(TimedOptions)] as TimedOptions;
-                    if (!options.Started)
-                    {
-                        profitMeter.LastPrice = e.LastOrder.Price;
-                    }
-
+                    options = this.Session[nameof(TimedOptions)] as TimedOptions;
                 }
                 OrderSide side;
                 if (x.Side == OrderSide.Buy)
@@ -299,14 +299,30 @@ namespace CoinbaseConsole
                     }
                 }
 
-                if (side == OrderSide.Buy)
+
+                if (this.Session.ContainsKey(nameof(TimedOptions)))
                 {
-                    profitMeter.Side = OrderSide.Sell;
+                    options = this.Session[nameof(TimedOptions)] as TimedOptions;
+                }
+                if (options == null)
+                {
+                    if (side == OrderSide.Buy)
+                    {
+                        profitMeter.Side = OrderSide.Sell;
+                    }
+                    else
+                    {
+                        profitMeter.Side = OrderSide.Buy;
+                    }
                 }
                 else
                 {
-                    profitMeter.Side = OrderSide.Buy;
+                    if (!options.Started)
+                    {
+                        profitMeter.LastPrice = e.LastOrder.Price;
+                    }
                 }
+
             }
 
 
@@ -320,6 +336,7 @@ namespace CoinbaseConsole
 
         private void UserFeed_OnDoneReceived(object sender, WebfeedEventArgs<Done> e)
         {
+
             if (!doneOrders.TryAdd(e.LastOrder.OrderId, true))
             {
                 doneOrders.Clear();
@@ -329,14 +346,15 @@ namespace CoinbaseConsole
             {
                 doneOrders.Clear();
             }
-
+            OrderManager.SetDirty();
+            FillsManager.MarkUpdated(ProductType);
             string message = $"[{DateTime.Now}] {e.LastOrder.ToDebugString()}";
             log.WriteLine(message);
             Console.ForegroundColor = (e.LastOrder.Reason != DoneReasonType.Canceled) ? ConsoleColor.Gray : ConsoleColor.Green;
             Console.WriteLine(message);
             Console.ResetColor();
             OrderManager.AddOrUpdate(e.LastOrder);
-            if (e.LastOrder.Reason != DoneReasonType.Canceled)
+            if (e.LastOrder.Reason != DoneReasonType.Canceled && e.LastOrder.ProductId == ProductType)
             {
                 TimedOptions options = null;
                 if (this.Session.ContainsKey(nameof(TimedOptions)))
@@ -349,6 +367,7 @@ namespace CoinbaseConsole
                         profitMeter.Side = OrderSide.Buy;
                     if (options != null && options.OrderSide == OrderSide.Sell)
                     {
+
                         if (options.TimedFlipPct != 0 && options.Started)
                         {
                             var args = ParseArguments($"flip {options.TimedFlipPct.ToString("P")}");
@@ -363,6 +382,23 @@ namespace CoinbaseConsole
                     }
                     else
                     {
+                        bool AutoFlipSells = Session.ContainsKey(nameof(AutoFlipSells)) && (bool)Session[nameof(AutoFlipSells)] == true;
+                        if (AutoFlipSells && options != null && options.OrderSide == OrderSide.Buy && options.TimedFlipPct != 0 && options.Started)
+                        {
+                            var order = OrdersService.GetOrderById(e.LastOrder.OrderId);
+                            var flipPrice = order.Price;
+                            var target = order.Price * (1m - (options.TimedFlipPct));
+                            var value = order.ExecutedValue - order.FillFees;
+                            var qty = value / target;
+                            if (qty < Product.BaseMinSize)
+                                qty = Product.BaseMinSize;
+                            var buyOrder = OrderHelper.CreatePostOnlyOrder(ProductType, OrderSide.Buy, target, qty);
+                            
+                            OrdersService.PlaceLimitBuyOrder(buyOrder);
+                            Console.ForegroundColor = ConsoleColor.DarkCyan;
+                            Console.WriteLine($"[{DateTime.Now}] Flipped order {order.ToDebugString()} to buy {buyOrder.OrderSize} @ {buyOrder.Price}");
+                            Console.ResetColor();
+                        }
                         //ParseArguments("cancel all").Execute();
                         if (!Session.ContainsKey("TimedAutoBuy") || (bool)Session["TimedAutoBuy"] == true)
                             ParseArguments("buy 10").Execute();
@@ -378,8 +414,14 @@ namespace CoinbaseConsole
                     System.Threading.Thread.Sleep(100);
                     if (options != null && options.OrderSide == OrderSide.Buy)
                     {
-                        var args = ParseArguments($"flip {options.TimedFlipPct.ToString("P")}");
-                        args.Execute();
+                        var last = FillsManager.GetLast(ProductType, LastSide.Any);
+
+                        if (last.Side == OrderSide.Buy)
+                        {
+                            var args = ParseArguments($"flip {options.TimedFlipPct.ToString("P")} delay 250");
+                            args.Execute();
+                        }
+
                     }
                     else
                     {
@@ -480,6 +522,7 @@ namespace CoinbaseConsole
             {
                 if (arg1 == "load")
                 {
+                    Session["loading"] = true;
                     if (File.Exists($"session-{productType}.json"))
                     {
                         var json = File.ReadAllText($"session-{productType}.json");
@@ -491,7 +534,7 @@ namespace CoinbaseConsole
                             switch (valueType)
                             {
                                 case "Int32":
-                                case "String":                              
+                                case "String":
                                 case "Decimal":
                                 case "Boolean":
                                 case "DateTime":
@@ -501,7 +544,7 @@ namespace CoinbaseConsole
                                     Session[key] = (decimal)(double)value;
                                     break;
                                 default:
-                                    switch(key)
+                                    switch (key)
                                     {
                                         case "flip":
                                             {
@@ -538,9 +581,11 @@ namespace CoinbaseConsole
                                             break;
                                     }
                                     break;
-                                   
+
                             }
                         }
+                        Session["loading"] = false;
+                        SaveSession();
                         commandActions.Add(() => Console.WriteLine("Loaded Session"));
                         ParseArguments("Session").Execute();
                     }
@@ -556,6 +601,16 @@ namespace CoinbaseConsole
             else if (arg0 == "cls")
             {
                 commandActions.Add(() => Console.Clear());
+            }
+            else if (arg0 == "order")
+            {
+                Guid orderId = Guid.Empty;
+                if (Guid.TryParse(arg1, out orderId))
+                {
+                    var order = OrdersService.GetOrderById(orderId);
+                    Console.WriteLine($"order: {order.ToDebugString()}");
+                }          
+                commandActions.Add(() => { });
             }
             else if (arg0 == "timed")
             {
@@ -837,12 +892,95 @@ namespace CoinbaseConsole
             {
                 commandActions.AddRange(ParseFillsOptions(arguments));
             }
-            else if (arg0 == "candles")
+            else if (arg0 == "candles" || arg0 == "stats")
             {
                 if (arg1 == "refresh" || arg1 == "update")
                 {
                     Task.Run(() => CandleService.UpdateCandles(ProductType, true));
                     commandActions.Add(() => Console.WriteLine("Updating candles"));
+                }
+                else if (arg1 == "risk" || arg0 == "stats")
+                {
+                    var reader = new CandleDbReader(productType, CandleGranularity.Hour1);
+                    var l = new List<Candle>();
+                    decimal price = 0m;
+                    if ((arg1 == "risk" && !arg2.ParseDecimal(out price)) || (arg0 == "stats" && !arg1.ParseDecimal(out price)))
+                        price = LastTicker.Price;
+                    foreach (var candle in reader)
+                    {
+                        if (price >= candle.Low && price <= candle.High)
+                        {
+                            l.Add(candle);
+                        }
+                    }
+                    var groups = new List<List<Candle>>();
+                    var current = new List<Candle>();
+                    decimal upCount = 0;
+                    decimal downCount = 0;
+                    foreach (var candle in l)
+                    {
+                        if (current.Count == 0 || candle.Time <= current.Last().Time.AddHours(6))
+                        {
+                            current.Add(candle);
+                        }
+                        else
+                        {
+                            if (current.Last().Close.Value > price)
+                                upCount++;
+                            else
+                                downCount++;
+                            groups.Add(current.ToList());
+                            current = new List<Candle>();
+                        }
+                    }
+                    if (current.Count > 0)
+                    {
+                        if (current.Last().Close.Value > price)
+                            upCount++;
+                        else
+                            downCount++;
+                        groups.Add(current.ToList());
+                    }
+
+                    decimal ratioUp = upCount / groups.Count;
+                    decimal ratioDown = downCount / groups.Count;
+                    int groupNumber = 0;
+                    var risks = groups.Select(x => x.Min(y => y.Low.Value)).ToList();
+                    var rewards = groups.Select(x => x.Max(y => y.High.Value)).ToList();
+                    var minRisk = groups.Min(x => x.Count > 0 ? x.Min(y => y.Low.Value) : 0m).ToPrecision(Product.QuoteIncrement);
+                    var maxRisk = groups.Max(x => x.Count > 0 ? x.Max(y => y.Low.Value) : 0m).ToPrecision(Product.QuoteIncrement);
+                    var minReward = groups.Min(x => x.Count > 0 ? x.Max(y => y.High.Value) : 0m).ToPrecision(Product.QuoteIncrement);
+                    var maxReward = groups.Max(x => x.Count > 0 ? x.Max(y => y.High.Value) : 0m).ToPrecision(Product.QuoteIncrement);
+                    var avgLow = groups.Average(x => x.Count > 0 ? x.Average(y => y.Low.Value) : 0m).ToPrecision(Product.QuoteIncrement);
+                    var avgHigh = groups.Average(x => x.Count > 0 ? x.Average(y => y.High.Value) : 0m).ToPrecision(Product.QuoteIncrement);
+                    var netLow = (avgLow - price).ToPrecision(Product.QuoteIncrement);
+                    var netHigh = (avgHigh - price).ToPrecision(Product.QuoteIncrement);
+                    var net = (netHigh + netLow).ToPrecision(Product.QuoteIncrement);
+                    var downPct = ratioDown.ToString("P");
+
+                    minRisk = risks.Min().ToPrecision(Product.QuoteIncrement);
+                    maxRisk = risks.Max().ToPrecision(Product.QuoteIncrement);
+                    minReward = rewards.Min().ToPrecision(Product.QuoteIncrement);
+                    maxReward = rewards.Max().ToPrecision(Product.QuoteIncrement);
+
+                    Console.WriteLine($"{price}: Net {net} Risk {avgLow} [{minRisk}-{maxRisk}] ({netLow} - {downPct}) Reward {avgHigh} [{minReward}-{maxReward}] ({netHigh} - {ratioUp.ToString("P")})");
+                    foreach (var group in groups)
+                    {
+                        var risk = group.Min(x => x.Low).Value;
+                        var reward = group.Max(x => x.High).Value;
+                        var minDate = group.Min(x => x.Time);
+                        var maxDate = group.Max(x => x.Time).AddHours(1);
+                        var span = maxDate.Subtract(minDate).Hours;
+                        var riskStr = risk.ToPrecision(Product.QuoteIncrement);
+                        var rewardStr = reward.ToPrecision(Product.QuoteIncrement);
+                        var close = group.Last().Close.Value;
+                        var clostStr = close.ToPrecision(Product.QuoteIncrement);
+                        string dir = close < price ? "D" : "U";
+                        Console.WriteLine($"\t{riskStr}\t{rewardStr}\tClose: {dir} {clostStr}\t({minDate.ToString("MM/dd/yy HH")} - {span} hours)");
+                    }
+
+                    string bp = "";
+                    commandActions.Add(() => { });
                 }
                 else
                 {
@@ -918,16 +1056,20 @@ namespace CoinbaseConsole
                 return $"timed {OrderSide} {Amount} {Interval} {TimedFlipPct.ToString("P")}  ({ProductType}, Running = {Started})";
             }
         }
-        private List<Action> ParseTimedOptions(ArgumentList arguments)
+        void SaveSession()
         {
-            var result = new List<Action>();
-            const string usage = tabbracket + "usage: timed [buy|sell] amount minuteInterval flipPercentage";
-            Action SaveSession = () =>
+            if (!Session.ContainsKey("loading") || (bool)Session["loading"] == false)
             {
                 var copy = Session.OrderBy(x => x.Key).ToDictionary(x => x.Key, x => x.Value);
                 var json = copy.ToJson();
                 File.WriteAllText($"session-{ProductType}.json", json);
-            };
+            }
+        }
+        private List<Action> ParseTimedOptions(ArgumentList arguments)
+        {
+            var result = new List<Action>();
+            const string usage = tabbracket + "usage: timed [buy|sell] amount minuteInterval flipPercentage";
+
             if (arguments.arg1 == "limit")
             {
                 decimal TimedLimitMaxPrice = 0m;
@@ -949,6 +1091,7 @@ namespace CoinbaseConsole
                     Console.WriteLine($"{nameof(TimedLimitMaxPrice)} = {TimedLimitMaxPrice}");
 
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "madelta")
@@ -974,7 +1117,19 @@ namespace CoinbaseConsole
             {
                 bool MarketOnWeighted = true;
                 MarketOnWeighted = Session.ContainsKey(nameof(MarketOnWeighted)) && (bool)Session[nameof(MarketOnWeighted)] == true;
-                if (arguments.arg2 == "null" || arguments.arg2 == "false")
+                if (arguments.arg2 == "null")
+                {
+                    if (Session.ContainsKey(nameof(MarketOnWeighted)))
+                    {
+                        Session.Remove(nameof(MarketOnWeighted));
+                        Console.WriteLine($"[{DateTime.Now}] {nameof(MarketOnWeighted)}: null");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[{DateTime.Now}] {nameof(MarketOnWeighted)} already null");
+                    }
+                }
+                else if (arguments.arg2 == "false")
                 {
                     Session[nameof(MarketOnWeighted)] = false;
                     Console.WriteLine($"[{DateTime.Now}] {nameof(MarketOnWeighted)}: {(bool)Session[nameof(MarketOnWeighted)]}");
@@ -992,6 +1147,7 @@ namespace CoinbaseConsole
                 {
                     Console.WriteLine($"Usage: timed market ([true|null|false]|[list])");
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "dynamic")
@@ -1023,6 +1179,7 @@ namespace CoinbaseConsole
                 {
                     Console.WriteLine($"Usage: timed dynamic ([true|null|false]|[list])");
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "flip")
@@ -1037,8 +1194,10 @@ namespace CoinbaseConsole
                     var options = (TimedOptions)Session["TimedOptions"];
                     options.TimedFlipPct = TimedFlipPct;
                     Console.WriteLine($"{options}");
+                    var side = options.OrderSide == OrderSide.Buy ? OrderSide.Sell : OrderSide.Buy;
                     ParseArguments($"flip {TimedFlipPct.ToString("P")}").Execute();
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "amount")
@@ -1054,6 +1213,7 @@ namespace CoinbaseConsole
                     options.Amount = amount;
                     Console.WriteLine($"{options}");
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "interval")
@@ -1069,6 +1229,7 @@ namespace CoinbaseConsole
                     options.Interval = (int)interval;
                     Console.WriteLine($"{options}");
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "consolidate" || arguments.arg1 == "c")
@@ -1077,6 +1238,7 @@ namespace CoinbaseConsole
                 if (arguments.arg2.ParseDecimal(out TimedConsolidate))
                 {
                     Session[nameof(TimedConsolidate)] = TimedConsolidate;
+                    SaveSession();
                     Console.WriteLine($"{nameof(TimedConsolidate)}: {TimedConsolidate.ToPrecision(Product.QuoteIncrement)}.");
                 }
                 else if (arguments.arg2 == "null")
@@ -1091,6 +1253,7 @@ namespace CoinbaseConsole
                         Console.WriteLine($"{nameof(TimedConsolidate)} not set.");
                     }
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "discount")
@@ -1118,6 +1281,7 @@ namespace CoinbaseConsole
                         Console.WriteLine($"{nameof(TimedDiscount)} not set.");
                     }
                 }
+                SaveSession();
                 result.Add(() => { });
             }
             else if (arguments.arg1 == "autobuy")
@@ -1135,6 +1299,7 @@ namespace CoinbaseConsole
                 {
                     result.Add(() => Console.WriteLine("usage: timed auotobuy [true|false]"));
                 }
+                SaveSession();
                 result.Add(() => Console.WriteLine($"[{DateTime.Now}] TimedAutoBuy: {Session["TimedAutoBuy"]}"));
             }
             else if (arguments.arg1 == "uptick")
@@ -1152,6 +1317,7 @@ namespace CoinbaseConsole
                 {
                     result.Add(() => Console.WriteLine("usage: timed uptick [true|false]"));
                 }
+                SaveSession();
                 result.Add(() => Console.WriteLine($"[{DateTime.Now}] TimedUptickRule: {Session["TimedUptickRule"]}"));
             }
             else if (arguments.arg1.ParseEnum<OrderSide>(out OrderSide side))
@@ -1227,6 +1393,7 @@ namespace CoinbaseConsole
                         {
                             ParseArguments($"flip {options.TimedFlipPct.ToString("P")}").Execute();
                         }
+                        SaveSession();
                     }
                     else
                     {
@@ -1243,6 +1410,7 @@ namespace CoinbaseConsole
             else if (arguments.arg1 == "cancel" || arguments.arg1 == "stop")
             {
                 StopOrderTimer();
+                SaveSession();
                 result.Add(() => Console.WriteLine("Stopped timed"));
             }
             else if (arguments.arg1 == "start")
@@ -1267,6 +1435,7 @@ namespace CoinbaseConsole
                         options.Started = true;
                         ParseArguments("last").Execute();
                         result.Add(() => Console.WriteLine($"{tabbracket} {(TimedOptions)Session[nameof(TimedOptions)]}"));
+                        SaveSession();
                     }
                 }
                 else
@@ -1353,11 +1522,16 @@ namespace CoinbaseConsole
                     var orderPrice = LastTicker.BestBid;
                     bool uptickOverride = false;
                     List<string> reasons = new List<string>();
-                    if (!Session.ContainsKey("MarketOnWeighted") && !execute)
+                    if ((!Session.ContainsKey("MarketOnWeighted") || (bool)Session["MarketOnWeighted"] == true) && !execute)
                     {
                         orderPrice = lastPrice * .99m;
                         uptickOverride = execute = true;
                         reasons.Add("Weighted");
+                    }
+                    else if (Session.ContainsKey("MarketOnWeighted") && (bool)Session["MarketOnWeighted"] == false && !execute)
+                    {
+                        uptickOverride = execute = true;
+                        reasons.Add("LimitWeighted");
                     }
                     decimal TimedLimitMaxPrice = 0m;
                     decimal TimedDiscount = 0m;
@@ -1376,7 +1550,7 @@ namespace CoinbaseConsole
                     bool TimedDynamic = false;
                     TimedDynamic = Session.ContainsKey(nameof(TimedDynamic)) && (bool)Session[nameof(TimedDynamic)] == true;
                     var baseOrderSize = options.Amount / orderPrice;
-                   
+
                     decimal profit = (LastTicker.Price / lastPrice) - 1m;
                     profit = -profit;
 
@@ -1407,10 +1581,11 @@ namespace CoinbaseConsole
                     {
                         string MarketOnWeighted = nameof(MarketOnWeighted);
                         bool marketMode = true;
-                        if (Session.ContainsKey("MarketOnWeighted")){
+                        if (Session.ContainsKey("MarketOnWeighted"))
+                        {
                             marketMode = (bool)Session[nameof(MarketOnWeighted)];
                         }
-                      
+
                         if (reasons[0] == "Weighted" && marketMode)
                         {
                             reasons.Add(MarketOnWeighted);
@@ -1427,7 +1602,7 @@ namespace CoinbaseConsole
                         //Product.MinMarketFunds = Minimum USD amount for market order
                         //increase buy size by percentage of loss
 
-                        var size =  baseOrderSize;
+                        var size = baseOrderSize;
                         if (size < Product.BaseMinSize)
                         {
                             size = Product.BaseMinSize;
@@ -1441,7 +1616,7 @@ namespace CoinbaseConsole
                         {
                             size *= (1m + profit);
                         }
-                        
+
 
                         if (reasons[0] == "Weighted" && marketMode)
                         {
@@ -1455,7 +1630,7 @@ namespace CoinbaseConsole
                         }
                         else
                         {
-                           
+
                             var order = OrderHelper.CreatePostOnlyOrder(options.ProductType, OrderSide.Buy, orderPrice, size);
                             OrdersService.PlaceLimitBuyOrder(order, this);
                         }
@@ -1581,24 +1756,13 @@ namespace CoinbaseConsole
             bool isMarket = bool.Parse(bool.TrueString);
             if (isMarket && executed && pct != 0)
             {
-                System.Threading.Thread.Sleep(5000);
-                var svc = new CoinbaseService();
-                var fillsLists = svc.client.FillsService.GetFillsByProductIdAsync(ProductType, 30, 1).Result.SelectMany(x => x).ToList();
-                var f = fillsLists.First();
-                if (f.Side == OrderSide.Sell)
+                if (FillsManager.Cache(ProductType).LastFill.Side == OrderSide.Sell)
                 {
-
-                    var line = $"flip {pct.ToString("P")}%";
-                    var arguments = ReadArgs(line,
-                        out string arg0,
-                        out string arg1,
-                        out string arg2,
-                        out string arg3,
-                        out string arg4,
-                        out string arg5,
-                        out string arg6);
-                    // ParseSwingOptions(arguments);
+                    //var line = $"flip {pct.ToString("P")}%";
+                    //var arguments = ParseArguments(line).Arguments;
+                    //ParseSwingOptions(arguments);
                 }
+
             }
 
 
@@ -2269,10 +2433,24 @@ namespace CoinbaseConsole
                 }
                 result.Add(() => { });
             }
-            else if ((arguments.arg0 == "flip" && arguments.Length >= 2) && ((arguments[1].ParseDecimal(out decimal flipPCT)) ||
+            else if ((arguments.arg0 == "flip" && arguments.Length >= 2) 
+                && ((arguments[1].ParseDecimal(out decimal flipPCT)) ||
+                    //(arguments.arg1.ParseEnum<LastSide>(out LastSide wantedSide) && arguments.arg2.TryParsePercent(out flipPCT)) ||
                     (arguments.arg1 == "last" && arguments.arg3.ParseDecimal(out flipPCT)))
             )
             {
+                if (arguments.arg2 == "delay" && arguments.arg3.ParseInt(out int delayTime))
+                {
+                    Task.Run(() =>
+                    {
+                        System.Threading.Thread.Sleep(delayTime);
+                        var line = $"flip {flipPCT.ToString("P")}";
+                        var args = ParseArguments(line);
+                        ParseSwingOptions(args.Arguments);
+                    });
+                    result.Add(() => { });
+                    goto Done;
+                }
                 DateTime lastFlipDate = DateTime.MinValue;
                 if (Session.ContainsKey(nameof(lastFlipDate)))
                 {
@@ -2868,82 +3046,20 @@ namespace CoinbaseConsole
             else if (arguments.arg0 == "last" || arguments.arg1 == "last")
             {
                 var product = OrdersService.GetProduct(ProductType);
-                //var svc = new CoinbaseService();
-
-                //var allFills = svc.client.FillsService.GetFillsByProductIdAsync(ProductType, 100, lastPages).Result.SelectMany(x => x).ToList();
-                //var firstSide = allFills.First().Side;
-                //if (firstSide == OrderSide.Buy)
-                //{
-                //    int pages = lastPages;
-                //    while (allFills.All(x => x.Side == OrderSide.Buy))
-                //    {
-                //        ++pages;
-                //        var candidates = svc.client.FillsService.GetFillsByProductIdAsync(ProductType, 100, pages).Result.SelectMany(x => x).ToList();
-                //        if (candidates.Count == allFills.Count) break;
-                //        allFills = candidates;
-                //        string bp = "Need More Fills";
-                //    }
-                //}
-                //else
-                //{
-                //    int pages = lastPages;
-                //    while (allFills.All(x => x.Side == OrderSide.Sell))
-                //    {
-                //        ++pages;
-                //        var candidates = svc.client.FillsService.GetFillsByProductIdAsync(ProductType, 100, pages).Result.SelectMany(x => x).ToList();
-                //        if (candidates.Count == allFills.Count) break;
-                //        allFills = candidates;
-                //        string bp = "Need More Fills";
-                //    }
-                //}
-                //var fillsLists = allFills.ToList();
-
-                //var f = fillsLists[0];
-                //var side = f.Side;
-                //var idx = 0;
-                //var qty = f.Size;
-                //var subtotal = f.Size * f.Price;
-                //var fee = f.Fee;
-                //var l = new List<CoinbasePro.Services.Fills.Models.Responses.FillResponse>();
-                //var orderIds = new List<Guid>();
-                //while (++idx < fillsLists.Count && fillsLists[idx].Side == f.Side)
-                //{
-                //    f = fillsLists[idx];
-                //    qty += f.Size;
-                //    subtotal += (f.Size * f.Price);
-                //    fee += f.Fee;
-                //    l.Add(f);
-                //    if (!orderIds.Contains(f.OrderId))
-                //        orderIds.Add(f.OrderId);
-                //}
-                //lastPages = Math.Max(1, (int)(Math.Ceiling(l.Count / 100m)));
-
-                //var total = subtotal;
-                //if (side == OrderSide.Buy)
-                //{
-                //    var total2 = total + fee;
-                //    var price2 = (total2) / qty;
-                //    total = total2;
-                //}
-                //else
-                //{
-                //    total -= fee;
-                //}
-                //var price = (total) / qty; //2.32360000
 
                 if (!arguments.arg1.ParseEnum<LastSide>(out LastSide wantedSide))
                 {
                     wantedSide = LastSide.Any;
                 }
                 var last = GetLast(ProductType, wantedSide);
-                if (arguments.arg1 == "over" || arguments.arg1 == "under")
+                if (arguments.arg1 == "over" || arguments.arg1 == "above" || arguments.arg1 == "under" || arguments.arg1 == "below")
                 {
                     if (!arguments.arg2.ParseDecimal(out decimal priceThreshold))
                     {
                         result.Add(arguments.InvalidAction("unable to parse price threshold"));
                         return result;
                     }
-                    bool over = arguments.arg1 == "over";
+                    bool over = arguments.arg1 == "over" || arguments.arg1 == "above";
                     var filtered = last.Fills.Take(0).ToList();
                     for (var i = 0; i < last.Fills.Count; i++)
                     {

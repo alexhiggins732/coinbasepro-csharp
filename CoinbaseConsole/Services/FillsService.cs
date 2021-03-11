@@ -16,18 +16,38 @@ namespace CoinbaseConsole
     public class FillsManager
     {
         public static ConcurrentDictionary<ProductType, FillsCache> FillsCache;
+        static FillsManager()
+        {
+            FillsCache = new ConcurrentDictionary<ProductType, FillsCache>();
+        }
+
 
         public static FillsCache Cache(ProductType productType)
         {
             var result = FillsCache.GetOrAdd(productType, (id) => new FillsCache(productType));
-            if (result.Stale)
-                result.UpdateFills();
             return result;
         }
 
 
         private static int lastPages = 1;
         public static LastOrder GetLast(ProductType ProductType, LastSide wantedSide = LastSide.Any)
+        {
+
+            LastOrder result = null;
+            var cache = Cache(ProductType);
+
+            if (wantedSide == LastSide.Buy || (wantedSide == LastSide.Any && cache.LastFill.Side == OrderSide.Buy))
+            {
+                result = cache.LastBuy;
+            }
+            else
+            {
+                result = cache.LastSell;
+            }
+            return result;
+
+        }
+        public static LastOrder GetLastWithApi(ProductType ProductType, LastSide wantedSide = LastSide.Any)
         {
             OrderManager.Refresh();
             var svc = new CoinbaseService();
@@ -132,60 +152,123 @@ namespace CoinbaseConsole
 
         }
 
+        internal static void MarkUpdated(ProductType productType)
+        {
+            Cache(productType).QueueUpdate();
+        }
     }
     public class FillsCache
     {
-        public FillResponse LastFill;
-        public List<FillResponse> SellFills;
-        public List<FillResponse> BuyFills;
-        public ProductType ProductType;
-        public Product Product;
+        FillResponse lastFill;
+        LastOrder lastBuy;
+        LastOrder lastSell;
         ConcurrentQueue<DateTime> updateRequests;
+        public ProductType ProductType { get; }
+        public Product Product { get; }
+        public bool Stale => updateRequests.Count > 0;
+
+        public FillResponse LastFill
+        {
+            get
+            {
+                if (Stale) UpdateFills();
+                return lastFill;
+            }
+            private set { lastFill = value; }
+        }
+        public List<FillResponse> SellFills => LastSell.Fills ?? new List<FillResponse>();
+
+        public List<FillResponse> BuyFills => LastBuy.Fills ?? new List<FillResponse>();
+
+
+        public LastOrder LastBuy
+        {
+            get { if (Stale) UpdateFills(); return lastBuy; }
+            internal set { lastBuy = value; }
+        }
+        public LastOrder LastSell
+        {
+            get { if (Stale) UpdateFills(); return lastSell; }
+            internal set { lastSell = value; }
+        }
+
         public FillsCache(ProductType productType)
         {
             this.ProductType = productType;
             Product = OrdersService.GetProduct(productType);
-            SellFills = new List<FillResponse>();
-            BuyFills = new List<FillResponse>();
             updateRequests = new ConcurrentQueue<DateTime>();
+            QueueUpdate();
             UpdateFills();
         }
         public void QueueUpdate()
         {
             updateRequests.Enqueue(DateTime.Now);
         }
-        public bool Stale => updateRequests.Count > 0;
+
+        private DateTime lastUpdated;
+        private bool updating = false;
+        private Guid updatingId;
         public void UpdateFills()
         {
-            while (updateRequests.Count > 0)
+            // if no update requests, another thread is performing an update.
+            Guid callId = Guid.NewGuid();
+            if (updateRequests.Count == 0)
+            {
+                while (updating) // wait until the thread completes
+                {
+                    System.Threading.Thread.Sleep(100);
+                    //Console.WriteLine($"Update in progress: {callId}");
+                }
+                return; // no need to update, so return
+            }
+            else
+            {
+                updating = true;
+                updatingId = callId; // 
+                //Console.WriteLine($"{updateRequests.Count} pending: {callId}");
+            }
+            while (updateRequests.Count > 0 && updatingId == callId)
             {
                 updateRequests.TryDequeue(out DateTime RequestDate);
+                lastUpdated = RequestDate > lastUpdated? RequestDate: lastUpdated;
                 System.Threading.Thread.Sleep(100);
+                //Console.WriteLine($"Dequeuing in progress: {callId}");
             }
-            var last = FillsManager.GetLast(ProductType, LastSide.Any);
+            if (updatingId != callId) // race condition
+            {
+                while (updating) // wait until the thread completes
+                {
+                    System.Threading.Thread.Sleep(100);
+                    //Console.WriteLine($"Race in progress: {callId}");
+                }
+                return; // no need to update, so return
+            }
+            //Console.WriteLine($"Getting last : {callId}");
+            var last = FillsManager.GetLastWithApi(ProductType, LastSide.Any);
             LastOrder previous = null;
             if (last != null)
             {
                 LastFill = last.Fills.First();
                 if (last.Side == OrderSide.Buy)
                 {
-                    BuyFills = last.Fills.ToList();
-                    previous = FillsManager.GetLast(ProductType, LastSide.Sell);
+                    lastBuy = last;
+                    previous = FillsManager.GetLastWithApi(ProductType, LastSide.Sell);
                     if (previous != null)
                     {
-                        SellFills = previous.Fills.ToList();
+                        lastSell = previous;
                     }
                 }
                 else
                 {
-                    SellFills = last.Fills.ToList();
-                    previous = FillsManager.GetLast(ProductType, LastSide.Buy);
+                    lastSell = last;
+                    previous = FillsManager.GetLastWithApi(ProductType, LastSide.Buy);
                     if (previous != null)
                     {
-                        BuyFills = previous.Fills.ToList();
+                        lastBuy = previous;
                     }
                 }
             }
+            updating = false;
         }
     }
 
